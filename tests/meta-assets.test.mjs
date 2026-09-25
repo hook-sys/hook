@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateAssignment, pickAssigned, hasUsableMetaAssets, EMPTY_ASSIGNMENTS } from "@/lib/meta/asset-assignment";
+import { validateAddition, pickAssigned, hasUsableMetaAssets, EMPTY_ASSIGNMENTS } from "@/lib/meta/asset-assignment";
 
 const BM_A = "111";
 const BM_B = "222";
@@ -24,28 +24,41 @@ const pool = {
   ],
   instagramAccounts: [],
 };
-const sel = (o) => ({ businessId: BM_A, adAccountIds: [], pageIds: [], instagramAccountIds: [], ...o });
+const add = (o) => ({ kind: "adAccounts", businessId: BM_A, assetIds: [], ...o });
+// Client already has AU338 FM Moto (act_2) under BM A.
+const current = {
+  ...EMPTY_ASSIGNMENTS,
+  businesses: [{ business_id: BM_A, name: "Alliant Energy Corporation SSS" }],
+  adAccounts: [{ business_id: BM_A, id: "act_2", name: "Formal Men Backup" }],
+};
 
-test("assignment: only pool assets of the selected Business Manager are accepted", () => {
-  const ok = validateAssignment(sel({ adAccountIds: ["act_2", "act_3", "act_2"], pageIds: ["501"] }), pool);
-  assert.equal(ok.ok, true);
-  assert.deepEqual(ok.adAccountIds, ["act_2", "act_3"], "deduplicated");
-  assert.deepEqual(ok.pageIds, ["501"]);
+test("add: one and multiple ad accounts from the selected Business Manager", () => {
+  const one = validateAddition(add({ assetIds: ["act_1"] }), pool, current);
+  assert.equal(one.ok, true);
+  assert.deepEqual(one.toAdd, ["act_1"]);
+  const many = validateAddition(add({ assetIds: ["act_1", "act_3", "act_1"] }), pool, current);
+  assert.deepEqual(many.toAdd, ["act_1", "act_3"], "deduplicated; existing assignment untouched");
+  const pages = validateAddition({ kind: "pages", businessId: BM_A, assetIds: ["501", "502"] }, pool, current);
+  assert.deepEqual(pages.toAdd, ["501", "502"]);
+});
 
-  assert.match(validateAssignment(sel({ adAccountIds: ["act_9"] }), pool).error, /does not belong/, "ad account from another BM");
-  assert.match(validateAssignment(sel({ pageIds: ["509"] }), pool).error, /does not belong/, "page from another BM");
-  assert.match(validateAssignment(sel({ adAccountIds: ["act_12345"] }), pool).error, /does not belong/, "arbitrary ID not in pool");
-  assert.match(validateAssignment(sel({ adAccountIds: ["12345"] }), pool).error, /Invalid/, "malformed ID");
-  assert.match(validateAssignment(sel({ businessId: "999" }), pool).error, /not in the Meta asset pool/);
-  assert.match(validateAssignment(sel({ businessId: "abc" }), pool).error, /Select a Business Manager/);
-  assert.match(validateAssignment(sel({ businessId: "333" }), pool).error, /no longer available/);
-  assert.match(validateAssignment(sel({ adAccountIds: ["act_4"] }), pool).error, /no longer available/, "new inactive asset");
-  const keep = validateAssignment(sel({ adAccountIds: ["act_4"] }), pool, {
-    ...EMPTY_ASSIGNMENTS,
-    businesses: [{ business_id: BM_A, name: "x" }],
-    adAccounts: [{ business_id: BM_A, id: "act_4", name: "Old account" }],
-  });
-  assert.equal(keep.ok, true, "an already-assigned asset that went inactive can be kept");
+test("add: duplicates skipped, all-duplicate rejected", () => {
+  const mixed = validateAddition(add({ assetIds: ["act_2", "act_3"] }), pool, current);
+  assert.deepEqual(mixed.toAdd, ["act_3"]);
+  assert.deepEqual(mixed.alreadyAssigned, ["act_2"]);
+  assert.match(validateAddition(add({ assetIds: ["act_2"] }), pool, current).error, /already assigned/);
+});
+
+test("add: other BM, inactive, unknown, malformed and empty selections rejected", () => {
+  assert.match(validateAddition(add({ assetIds: ["act_9"] }), pool, current).error, /does not belong/, "ad account from another BM");
+  assert.match(validateAddition({ kind: "pages", businessId: BM_A, assetIds: ["509"] }, pool, current).error, /does not belong/, "page from another BM");
+  assert.match(validateAddition(add({ assetIds: ["act_4"] }), pool, current).error, /no longer available/, "inactive account");
+  assert.match(validateAddition(add({ assetIds: ["act_12345"] }), pool, current).error, /does not belong/, "arbitrary ID not in pool");
+  assert.match(validateAddition(add({ assetIds: ["12345"] }), pool, current).error, /Invalid/, "malformed ID");
+  assert.match(validateAddition(add({ assetIds: [] }), pool, current).error, /Select at least one/);
+  assert.match(validateAddition(add({ businessId: "999", assetIds: ["act_1"] }), pool, current).error, /not in the Meta asset pool/);
+  assert.match(validateAddition(add({ businessId: "333", assetIds: ["act_1"] }), pool, current).error, /no longer available/, "inactive BM");
+  assert.match(validateAddition(add({ businessId: "abc", assetIds: ["act_1"] }), pool, current).error, /Select a Business Manager/);
 });
 
 test("assignment: campaign/audience selection uses only assigned assets", () => {

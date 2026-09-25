@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireSuperAdmin } from "@/lib/auth/session";
-import { isMetaId, validateAssignment, type MetaPoolKind } from "@/lib/meta/asset-assignment";
+import { POOL_KIND_LABEL, isMetaId, validateAddition, type MetaPoolKind } from "@/lib/meta/asset-assignment";
 import { logEvent } from "@/lib/observability";
 import { getClientById } from "@/lib/services/clients";
 import { getClientMetaAssignments, listMetaAssetPool } from "@/lib/services/meta-assets";
@@ -26,25 +26,24 @@ const ASSIGNMENT_TABLES: Record<MetaPoolKind, { table: string; idColumn: string 
 const clientPath = (clientId: string) => `/admin/clients/${clientId}`;
 const readList = (formData: FormData, name: string) => formData.getAll(name).map(String);
 
-// Assigns a Business Manager and sets exactly which of its ad accounts / Pages / Instagram
-// accounts this client may use (other Business Managers' assignments are untouched).
-export async function assignClientMetaAssets(
+// Adds (never replaces) assets of one type from the selected Business Manager to the client.
+// The BM itself is assigned too if it isn't yet. Existing assignments are left unchanged;
+// assets the client already has are skipped, and the primary keys prevent duplicates.
+export async function addClientMetaAssets(
   clientId: string,
+  kind: MetaPoolKind,
   _prev: MetaAssetActionState,
   formData: FormData
 ): Promise<MetaAssetActionState> {
   const admin = await requireSuperAdmin();
+  if (!(kind in ASSIGNMENT_TABLES)) return { status: "error", message: "Invalid asset type." };
   const client = await getClientById(clientId);
   if (!client) return { status: "error", message: "Client not found." };
 
+  // Re-validated against the central pool + current assignments (server-side, never trusted from the browser).
   const [pool, current] = await Promise.all([listMetaAssetPool(), getClientMetaAssignments(client.id)]);
-  const checked = validateAssignment(
-    {
-      businessId: String(formData.get("business_id") ?? ""),
-      adAccountIds: readList(formData, "ad_account_ids"),
-      pageIds: readList(formData, "page_ids"),
-      instagramAccountIds: readList(formData, "instagram_account_ids"),
-    },
+  const checked = validateAddition(
+    { kind, businessId: String(formData.get("business_id") ?? ""), assetIds: readList(formData, "asset_ids") },
     pool,
     current
   );
@@ -56,33 +55,35 @@ export async function assignClientMetaAssets(
     .upsert({ client_id: client.id, business_id: checked.businessId, assigned_by: admin.id }, { onConflict: "client_id,business_id", ignoreDuplicates: true });
   if (bmError) return { status: "error", message: "Could not assign the Business Manager." };
 
-  const selected: Record<MetaPoolKind, string[]> = {
-    adAccounts: checked.adAccountIds,
-    pages: checked.pageIds,
-    instagramAccounts: checked.instagramAccountIds,
-  };
-  for (const kind of Object.keys(ASSIGNMENT_TABLES) as MetaPoolKind[]) {
-    const { table, idColumn } = ASSIGNMENT_TABLES[kind];
-    const ids = selected[kind];
-    // Unselected assets of this BM are unassigned (assignment rows only).
-    let remove = supabase.from(table).delete().eq("client_id", client.id).eq("business_id", checked.businessId);
-    if (ids.length) remove = remove.not(idColumn, "in", `(${ids.map((id) => `"${id}"`).join(",")})`);
-    const { error: removeError } = await remove;
-    if (removeError) return { status: "error", message: "Could not update the assignment." };
+  const { table, idColumn } = ASSIGNMENT_TABLES[kind];
+  const { error } = await supabase.from(table).upsert(
+    checked.toAdd.map((id) => ({ client_id: client.id, business_id: checked.businessId, [idColumn]: id, assigned_by: admin.id })),
+    { onConflict: `client_id,${idColumn}`, ignoreDuplicates: true }
+  );
+  if (error) return { status: "error", message: "Could not add the selected assets." };
 
-    if (ids.length) {
-      // An asset already assigned to this client (e.g. via another Business Manager) is kept as-is.
-      const { error: addError } = await supabase.from(table).upsert(
-        ids.map((id) => ({ client_id: client.id, business_id: checked.businessId, [idColumn]: id, assigned_by: admin.id })),
-        { onConflict: `client_id,${idColumn}`, ignoreDuplicates: true }
-      );
-      if (addError) return { status: "error", message: "Could not save the assignment." };
-    }
-  }
-
-  logEvent("info", { provider: "meta", operation: "assign_client_assets", clientId: client.id, userId: admin.id, status: "succeeded" });
+  logEvent("info", { provider: "meta", operation: "add_client_assets", clientId: client.id, userId: admin.id, status: "succeeded" });
   revalidatePath(clientPath(client.id));
-  return { status: "success", message: "Meta assets assigned." };
+  const skipped = checked.alreadyAssigned.length ? ` (${checked.alreadyAssigned.length} already assigned, skipped)` : "";
+  return { status: "success", message: `Added ${checked.toAdd.length} ${POOL_KIND_LABEL[kind]}${checked.toAdd.length === 1 ? "" : "s"}${skipped}.` };
+}
+
+// Assigns only the Business Manager (no assets yet).
+export async function addClientBusinessManager(clientId: string, businessId: string): Promise<MetaAssetActionState> {
+  const admin = await requireSuperAdmin();
+  const client = await getClientById(clientId);
+  if (!client) return { status: "error", message: "Client not found." };
+  const pool = await listMetaAssetPool();
+  const bm = pool.businesses.find((b) => b.business_id === businessId);
+  if (!isMetaId("business", businessId) || !bm?.is_active) return { status: "error", message: "That Business Manager is not available in the Meta asset pool." };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("client_meta_business_managers")
+    .upsert({ client_id: client.id, business_id: businessId, assigned_by: admin.id }, { onConflict: "client_id,business_id", ignoreDuplicates: true });
+  if (error) return { status: "error", message: "Could not assign the Business Manager." };
+  revalidatePath(clientPath(client.id));
+  return { status: "success", message: "Business Manager assigned." };
 }
 
 // Removes a Business Manager from the client, together with the client's assets under it.

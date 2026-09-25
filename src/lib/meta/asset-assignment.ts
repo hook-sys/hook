@@ -56,55 +56,49 @@ export function isMetaId(kind: MetaPoolKind | "business", value: string): boolea
   return ID_FORMAT[kind].test(value);
 }
 
-export interface AssignmentSelection {
+export interface AdditionRequest {
+  kind: MetaPoolKind;
   businessId: string;
-  adAccountIds: string[];
-  pageIds: string[];
-  instagramAccountIds: string[];
+  assetIds: string[];
 }
 
-export type AssignmentResult =
-  | { ok: true; businessId: string; adAccountIds: string[]; pageIds: string[]; instagramAccountIds: string[] }
+export type AdditionResult =
+  | { ok: true; businessId: string; toAdd: string[]; alreadyAssigned: string[] }
   | { ok: false; error: string };
 
-// Validates a Super Admin's selection against the pool rows of the chosen Business Manager.
-// Already-assigned assets that have since become inactive in Meta may be kept, but new
-// inactive assets cannot be added.
-export function validateAssignment(
-  selection: AssignmentSelection,
+// Validates adding assets of ONE type to a client. Browser input is never trusted: the
+// Business Manager must be an active pool BM, and every asset must be an ACTIVE pool asset
+// belonging to that BM. Assets the client already has are skipped (no duplicates); existing
+// assignments are never changed by an addition.
+export function validateAddition(
+  request: AdditionRequest,
   pool: MetaAssetPool,
   currentlyAssigned: ClientMetaAssignments = EMPTY_ASSIGNMENTS
-): AssignmentResult {
-  const businessId = selection.businessId.trim();
+): AdditionResult {
+  const { kind } = request;
+  const label = POOL_KIND_LABEL[kind];
+  const businessId = request.businessId.trim();
   if (!isMetaId("business", businessId)) return { ok: false, error: "Select a Business Manager." };
   const business = pool.businesses.find((b) => b.business_id === businessId);
   if (!business) return { ok: false, error: "That Business Manager is not in the Meta asset pool." };
-  const businessAssigned = currentlyAssigned.businesses.some((b) => b.business_id === businessId);
-  if (!business.is_active && !businessAssigned) {
-    return { ok: false, error: "That Business Manager is no longer available in the Meta connection." };
+  if (!business.is_active) return { ok: false, error: "That Business Manager is no longer available in the Meta connection." };
+
+  const ids = [...new Set(request.assetIds.map((id) => id.trim()).filter(Boolean))];
+  if (ids.length === 0) return { ok: false, error: `Select at least one ${label}.` };
+  if (ids.length > 50) return { ok: false, error: `Select at most 50 ${label}s at a time.` };
+
+  for (const id of ids) {
+    if (!isMetaId(kind, id)) return { ok: false, error: `Invalid ${label} ID.` };
+    const asset = pool[kind].find((a) => a.id === id && a.business_id === businessId);
+    if (!asset) return { ok: false, error: `A selected ${label} does not belong to this Business Manager.` };
+    if (!asset.is_active) return { ok: false, error: `"${asset.name}" is no longer available in the Meta connection.` };
   }
 
-  const check = (kind: MetaPoolKind, ids: string[]): string[] | { error: string } => {
-    const unique = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
-    if (unique.length > 50) return { error: `Select at most 50 ${POOL_KIND_LABEL[kind]}s.` };
-    for (const id of unique) {
-      if (!isMetaId(kind, id)) return { error: `Invalid ${POOL_KIND_LABEL[kind]} ID.` };
-      const asset = pool[kind].find((a) => a.id === id && a.business_id === businessId);
-      if (!asset) return { error: `A selected ${POOL_KIND_LABEL[kind]} does not belong to this Business Manager.` };
-      const wasAssigned = currentlyAssigned[kind].some((a) => a.id === id);
-      if (!asset.is_active && !wasAssigned) return { error: `"${asset.name}" is no longer available in the Meta connection.` };
-    }
-    return unique;
-  };
-
-  const adAccountIds = check("adAccounts", selection.adAccountIds);
-  if (!Array.isArray(adAccountIds)) return { ok: false, error: adAccountIds.error };
-  const pageIds = check("pages", selection.pageIds);
-  if (!Array.isArray(pageIds)) return { ok: false, error: pageIds.error };
-  const instagramAccountIds = check("instagramAccounts", selection.instagramAccountIds);
-  if (!Array.isArray(instagramAccountIds)) return { ok: false, error: instagramAccountIds.error };
-
-  return { ok: true, businessId, adAccountIds, pageIds, instagramAccountIds };
+  const assignedIds = new Set(currentlyAssigned[kind].map((a) => a.id));
+  const toAdd = ids.filter((id) => !assignedIds.has(id));
+  const alreadyAssigned = ids.filter((id) => assignedIds.has(id));
+  if (toAdd.length === 0) return { ok: false, error: `The selected ${label}s are already assigned to this client.` };
+  return { ok: true, businessId, toAdd, alreadyAssigned };
 }
 
 // Resolves which assigned asset to use: the requested one if it is assigned; otherwise the
