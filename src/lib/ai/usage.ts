@@ -113,7 +113,7 @@ export interface AiReadiness {
   fal: ProviderReadiness;
   // The globally selected AI brain provider (used by every page that needs the AI brain).
   brain: ProviderReadiness;
-  brainProvider: AIProviderId;
+  brainProvider: AIProviderId | null;
   brainLabel: string;
   // Set when no model is selected for that provider.
   brainDetail?: string;
@@ -136,9 +136,9 @@ export async function getAiProviderReadiness(): Promise<AiReadiness> {
   return {
     ...providers,
     fal: state(fal.status),
-    brain: route.ok ? providers[brainProvider] : "not_configured",
+    brain: route.ok && brainProvider ? providers[brainProvider] : "not_configured",
     brainProvider,
-    brainLabel: AI_PROVIDER_LABELS[brainProvider],
+    brainLabel: brainProvider ? AI_PROVIDER_LABELS[brainProvider] : "the AI Brain",
     ...(route.ok ? {} : { brainDetail: route.error }),
   };
 }

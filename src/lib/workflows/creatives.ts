@@ -10,6 +10,9 @@ import { aiErrorMessage, generateAndLog } from "@/lib/ai/generate";
 import { brainReadiness } from "@/lib/ai/brain";
 import { enforceAiRateLimit, getAiProviderReadiness, logGeneration } from "@/lib/ai/usage";
 import { checkFalCapabilities, falBillingUnits, falModelFor, planFalJob } from "@/lib/creative/fal-models";
+import { getFalModelSelection } from "@/lib/creative/fal-selection";
+import { drivePublicDownloadUrl, isFalReferenceMime, probePublicDriveMedia } from "@/lib/integrations/drive-media";
+import { IntegrationError } from "@/lib/integrations/types";
 import {
   CREATIVE_FORMATS,
   CREATIVE_MEDIA,
@@ -67,16 +70,26 @@ export function parseCreativeRequest(input: Record<string, unknown>): CreativeRe
   };
 }
 
-// Product image assets are Drive/https references; Drive files must be shared
-// "Anyone with the link" for the generation model to fetch them.
+// Reference images come only from Google Drive. Before anything is paid for, the file is
+// re-checked through Google's public download link — the same URL fal.ai fetches — so it
+// must still exist, be shared "Anyone with the link", and be a format fal.ai accepts.
 async function resolveReferenceImage(clientId: string, productId: string, assetId: string | null) {
   if (!assetId) return { url: null };
   const asset = (await listProductAssets(clientId, productId)).find((a) => a.id === assetId);
-  if (!asset || asset.asset_type !== "image") return { error: "The reference image must be one of this product's image assets." };
-  const url = asset.drive_file_id
-    ? `https://drive.google.com/uc?export=download&id=${encodeURIComponent(asset.drive_file_id)}`
-    : asset.url;
-  return url ? { url } : { error: "The reference image has no usable URL." };
+  if (!asset || asset.asset_type !== "image" || !asset.drive_file_id) {
+    return { error: "The reference image must be one of this product's Google Drive images." };
+  }
+  if (!isFalReferenceMime(asset.mime_type)) return { error: "Fal.ai reference images must be JPEG, PNG or WebP." };
+  let served: string | null;
+  try {
+    served = await probePublicDriveMedia(asset.drive_file_id);
+  } catch (error) {
+    return { error: error instanceof IntegrationError ? error.message : "Could not check the Google Drive reference image." };
+  }
+  if (!isFalReferenceMime(served)) {
+    return { error: "Fal.ai can't read this Drive image. Share it as “Anyone with the link” (Viewer) and try again." };
+  }
+  return { url: drivePublicDownloadUrl(asset.drive_file_id) };
 }
 
 // Context + prompt are built before any paid call; builder errors (e.g. a disabled HATOG
@@ -112,7 +125,7 @@ async function generateBrief(profile: AdminProfile, clientId: string, request: C
 
 export type WorkflowResult<T> = { ok: true; value: T; message: string } | { ok: false; message: string };
 
-// Brief only (Claude), nothing stored or sent to Fal.ai.
+// Brief only (selected AI brain model), nothing stored or sent to Fal.ai.
 export async function generateCreativeBriefOnly(
   profile: AdminProfile,
   clientId: string,
@@ -128,7 +141,7 @@ export async function generateCreativeBriefOnly(
   }
 }
 
-// Full pipeline: brief (Claude) -> Fal.ai job. The creative row is created as "generating";
+// Full pipeline: Drive reference -> brief (selected AI brain model) -> selected Fal.ai model. The creative row is created as "generating";
 // the Fal.ai poller later records ready/failed.
 export async function startCreativeGeneration(
   profile: AdminProfile,
@@ -146,7 +159,8 @@ export async function startCreativeGeneration(
   if ("error" in reference) return { ok: false, message: reference.error! };
 
   // Everything checkable for free is checked before paying for an AI brain call.
-  const capabilityError = checkFalCapabilities(request.media, request.format, request.durationSeconds, reference.url !== null);
+  const falModels = await getFalModelSelection();
+  const capabilityError = checkFalCapabilities(request.media, request.format, request.durationSeconds, reference.url !== null, falModels);
   if (capabilityError) return { ok: false, message: capabilityError };
 
   const readiness = await getAiProviderReadiness();
@@ -161,14 +175,17 @@ export async function startCreativeGeneration(
     return { ok: false, message: aiErrorMessage(error, "Could not create the creative brief.") };
   }
 
-  const plan = planFalJob({
-    media: request.media,
-    format: request.format,
-    durationSeconds: request.durationSeconds,
-    prompt: brief.generation_prompt,
-    negativePrompt: brief.negative_prompt,
-    referenceImageUrl: reference.url,
-  });
+  const plan = planFalJob(
+    {
+      media: request.media,
+      format: request.format,
+      durationSeconds: request.durationSeconds,
+      prompt: brief.generation_prompt,
+      negativePrompt: brief.negative_prompt,
+      referenceImageUrl: reference.url,
+    },
+    falModels
+  );
 
   const supabase = await createClient();
   const base = {
@@ -184,7 +201,7 @@ export async function startCreativeGeneration(
     negative_prompt: brief.negative_prompt,
     reference_image_url: reference.url,
     provider: "fal",
-    provider_model: plan.ok ? plan.modelId : falModelFor(request.media, reference.url !== null).id,
+    provider_model: plan.ok ? plan.modelId : falModelFor(request.media, reference.url !== null, falModels).id,
     created_by: profile.id,
   };
 

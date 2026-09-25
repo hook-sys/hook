@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { providerReady, refreshProviderModels } from "@/lib/ai/brain";
+import { providerReady, refreshProviderModels, verifyBrainModel } from "@/lib/ai/brain";
 import {
   AI_PROVIDER_LABELS,
   isAIProvider,
@@ -48,6 +48,9 @@ export async function saveAiBrainAction(_prev: AiSettingsState, formData: FormDa
   if (!(await providerReady(provider as AIProviderId))) {
     return { status: "error", message: `Connect ${AI_PROVIDER_LABELS[provider as AIProviderId]} first.` };
   }
+  // A real (tiny) request proves the model works with the app's request format.
+  const failed = await verifyBrainModel({ provider: provider as AIProviderId, model });
+  if (failed) return { status: "error", message: `${model} failed the test request, so it was not selected: ${failed}` };
 
   const { error } = await supabase
     .from("ai_brain_settings")

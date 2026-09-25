@@ -9,14 +9,13 @@ export const PRODUCT_STATUS_LABELS: Record<ProductStatus, string> = {
 
 export const CURRENCIES = ["BDT", "USD", "EUR", "GBP", "INR", "AED", "SAR"] as const;
 
-export const PRODUCT_ASSET_TYPES = ["image", "video", "document", "other"] as const;
+// Google Drive is the only asset source, and only images/videos are allowed.
+export const PRODUCT_ASSET_TYPES = ["image", "video"] as const;
 export type ProductAssetType = (typeof PRODUCT_ASSET_TYPES)[number];
 
 export const PRODUCT_ASSET_TYPE_LABELS: Record<ProductAssetType, string> = {
   image: "Image",
   video: "Video",
-  document: "Document",
-  other: "Other",
 };
 
 export interface Product {
@@ -51,5 +50,7 @@ export interface ProductAsset {
   drive_file_id: string | null;
   url: string | null;
   label: string | null;
+  // Verified from Google Drive when the asset was added (image/* or video/*).
+  mime_type: string | null;
   created_at: string;
 }

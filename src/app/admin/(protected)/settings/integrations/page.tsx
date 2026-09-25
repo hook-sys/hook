@@ -5,6 +5,9 @@ import { GOOGLE_ENV_VARS, META_ENV_VARS, missingEnvVars } from "@/lib/integratio
 import { listIntegrations } from "@/lib/integrations/store";
 import type { MetaAssetPool } from "@/lib/meta/asset-assignment";
 import { listMetaAssetPool } from "@/lib/services/meta-assets";
+import { saveFalModelsAction } from "@/lib/actions/fal-settings";
+import { getFalModelSelection } from "@/lib/creative/fal-selection";
+import { FalModelsForm } from "@/components/admin/integrations/FalModelsForm";
 import { ActionButton } from "@/components/admin/ActionButton";
 import { ApiKeyIntegrationPanel } from "@/components/admin/integrations/ApiKeyIntegrationPanel";
 import {
@@ -58,6 +61,8 @@ export default async function IntegrationsPage({ searchParams }: PageProps<"/adm
 
   const integrations = await listIntegrations();
   const { google_drive: drive, meta, claude, openai, gemini, fal } = integrations;
+  const falReady = fal.status === "connected" || fal.status === "configured";
+  const falSelection = falReady ? await getFalModelSelection() : null;
   const googleMissing = missingEnvVars(GOOGLE_ENV_VARS);
   const metaMissing = missingEnvVars(META_ENV_VARS);
 
@@ -256,6 +261,7 @@ export default async function IntegrationsPage({ searchParams }: PageProps<"/adm
             lastTested={formatTimestamp(fal.config.last_tested_at)}
             lastError={fal.status === "error" ? (fal.config.last_error ?? null) : null}
           />
+          {falSelection && <FalModelsForm action={saveFalModelsAction} initialSelection={falSelection} />}
         </IntegrationCard>
 
         <IntegrationCard

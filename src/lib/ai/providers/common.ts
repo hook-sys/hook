@@ -21,8 +21,8 @@ export function isAIProvider(value: unknown): value is AIProviderId {
   return typeof value === "string" && (AI_PROVIDERS as readonly string[]).includes(value);
 }
 
-// The model the app used before multi-provider support; still the default when nothing
-// is configured, so existing behavior is unchanged.
+// Default model of the Claude adapter when called directly (never used by AI brain routing,
+// which always passes the Super Admin's selected model).
 export const LEGACY_CLAUDE_MODEL = "claude-opus-5";
 
 export const AI_TASKS = ["strategy", "content", "campaign_intelligence", "analytics_report", "creative_brief"] as const;
@@ -59,19 +59,19 @@ export interface ModelRef {
 // ONE globally selected provider + model serves every AI brain task. Other connected
 // providers are never called. There is no automatic switching between providers.
 export interface BrainConfig {
-  provider: AIProviderId;
+  provider: AIProviderId | null;
   model: string | null;
 }
 
-export const EMPTY_BRAIN_CONFIG: BrainConfig = { provider: "claude", model: null };
+export const EMPTY_BRAIN_CONFIG: BrainConfig = { provider: null, model: null };
 
 export type RouteResult = { ok: true; primary: ModelRef } | { ok: false; error: string };
 
-// Nothing configured keeps the pre-existing behavior (Claude + its legacy default model).
+// Only an explicit Super Admin selection is used; there is no implicit default provider.
 export function resolveRoute(config: BrainConfig): RouteResult {
-  const model = config.model ?? (config.provider === "claude" ? LEGACY_CLAUDE_MODEL : null);
-  if (!model) return { ok: false, error: `Select a ${AI_PROVIDER_LABELS[config.provider]} model in Settings → AI Brain.` };
-  return { ok: true, primary: { provider: config.provider, model } };
+  if (!config.provider) return { ok: false, error: "Select an AI Brain provider and model in Settings → AI Brain." };
+  if (!config.model) return { ok: false, error: `Select a ${AI_PROVIDER_LABELS[config.provider]} model in Settings → AI Brain.` };
+  return { ok: true, primary: { provider: config.provider, model: config.model } };
 }
 
 // ---------------------------------------------------------------------------
@@ -174,12 +174,20 @@ export interface DiscoveredModel {
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,200}$/;
 
 // OpenAI's /v1/models lists every model type (embeddings, audio, images...). Keep the
-// text-generation families usable with Chat Completions.
+// text-generation families usable with Chat Completions + JSON-schema structured output:
+// "-pro" models are Responses-API only, "live" models are realtime, and GPT-3.5 / base GPT-4
+// don't support structured outputs. (Saving a model also runs a real test request.)
+const OPENAI_CHAT_FAMILY = /^(gpt-|o\d|chatgpt-)/;
+const OPENAI_UNSUPPORTED =
+  /(embedding|tts|whisper|dall-e|audio|realtime|transcribe|image|moderation|search|instruct|computer-use|codex|-pro(-|$)|^gpt-live|^gpt-3\.5|^gpt-4(-turbo.*|-\d{4})?$)/;
+
+export function isOpenAIChatModelId(id: string): boolean {
+  return MODEL_ID.test(id) && OPENAI_CHAT_FAMILY.test(id) && !OPENAI_UNSUPPORTED.test(id);
+}
+
 export function filterOpenAIModels(models: { id: string }[]): DiscoveredModel[] {
-  const chatFamily = /^(gpt-|o\d|chatgpt-)/;
-  const nonChat = /(embedding|tts|whisper|dall-e|audio|realtime|transcribe|image|moderation|search|instruct|computer-use|codex)/;
   return models
-    .filter((m) => MODEL_ID.test(m.id) && chatFamily.test(m.id) && !nonChat.test(m.id))
+    .filter((m) => isOpenAIChatModelId(m.id))
     .map((m) => ({ id: m.id, displayName: m.id, supportsStructured: null, supportsAdaptiveThinking: null }))
     .sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -212,7 +220,14 @@ export interface StoredModel {
 // Models an admin may select: discovered for that provider, still available, and not
 // reported as lacking structured output (the app requires JSON outputs).
 export function selectableModels(models: StoredModel[], provider: AIProviderId): StoredModel[] {
-  return models.filter((m) => m.provider === provider && m.is_available && m.supports_structured !== false);
+  return models.filter(
+    (m) =>
+      m.provider === provider &&
+      m.is_available &&
+      m.supports_structured !== false &&
+      // Also applied to rows discovered before the filter was tightened.
+      (provider !== "openai" || isOpenAIChatModelId(m.model_id))
+  );
 }
 
 // Server-side check for every saved selection (the browser is never trusted).

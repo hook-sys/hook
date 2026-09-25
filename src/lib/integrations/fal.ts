@@ -120,6 +120,18 @@ export async function getFalJobResult(responseUrl: string): Promise<unknown> {
   return body;
 }
 
+// True only if fal.ai's authenticated Platform API lists the endpoint (read-only; nothing
+// runs or is billed). Used before a model can be selected, so availability is never assumed.
+export async function isFalModelAvailable(modelId: string): Promise<boolean> {
+  if (!MODEL_ID.test(modelId)) return false;
+  const res = await falRequest(`/models/pricing?endpoint_id=${encodeURIComponent(modelId)}`);
+  if (res.status === 401 || res.status === 403) throw new IntegrationError("Fal.ai rejected the API key.");
+  if (res.status >= 500 || res.status === 429) throw new IntegrationError(`Fal.ai is unavailable right now (${res.status}). Try again.`);
+  if (!res.ok) return false;
+  const body = (await res.json().catch(() => null)) as { prices?: { endpoint_id?: string }[] } | null;
+  return Boolean(body?.prices?.some((p) => p.endpoint_id === modelId));
+}
+
 // Published unit price for an endpoint, for usage estimates (not billing).
 export async function getFalUnitPrice(modelId: string): Promise<{ unitPrice: number; unit: string } | null> {
   try {

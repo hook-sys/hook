@@ -23,6 +23,8 @@ import { ActionButton } from "@/components/admin/ActionButton";
 import { CampaignCreativePicker } from "@/components/admin/campaigns/CampaignCreativePicker";
 import { uploadAllReadyToDriveAction, uploadSelectedToDriveAction } from "@/lib/actions/creatives";
 import { listClientImageAssets, listProducts } from "@/lib/services/products";
+import { getFalModelSelection } from "@/lib/creative/fal-selection";
+import { isFalReferenceMime } from "@/lib/integrations/drive-media";
 
 const ALL_TYPES = Object.keys(CREATIVE_TYPE_LABELS) as CreativeType[];
 
@@ -39,10 +41,11 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
   const query = await searchParams;
   const pick = (v: unknown, allowed: readonly string[]) => (typeof v === "string" && allowed.includes(v) ? v : "");
 
-  const [products, images, readiness] = await Promise.all([
+  const [products, images, readiness, falModels] = await Promise.all([
     listProducts(client.id),
     listClientImageAssets(client.id),
     getAiProviderReadiness(),
+    getFalModelSelection(),
   ]);
   const productIds = products.map((p) => p.id);
   const filters = {
@@ -65,8 +68,9 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
     .map((p) => ({
       id: p.id,
       name: p.name,
+      // Drive images in a format fal.ai accepts as a reference.
       images: images
-        .filter((a) => a.product_id === p.id)
+        .filter((a) => a.product_id === p.id && a.drive_file_id && isFalReferenceMime(a.mime_type))
         .map((a, i) => ({ id: a.id, label: a.label || `Image ${i + 1}` })),
     }));
 
@@ -97,6 +101,7 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
               generateAction={generateCreative.bind(null, client.id)}
               previewAction={isSuperAdmin ? previewCreativeRequest.bind(null, client.id) : undefined}
               canGenerate={readiness.brain === "ready" && readiness.fal === "ready"}
+              falModels={falModels}
             />
           </CardContent>
         </Card>
@@ -107,9 +112,12 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
               <CardTitle>AI Usage (30 days)</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 py-6 text-sm text-slate-700">
-              <p>
-                Claude: {usage.anthropic.calls} call{usage.anthropic.calls === 1 ? "" : "s"} · ~${usage.anthropic.costUsd.toFixed(2)}
-              </p>
+              {usage.openai.calls + usage.anthropic.calls + usage.gemini.calls === 0 && <p>AI brain: 0 calls</p>}
+              {usage.anthropic.calls > 0 && (
+                <p>
+                  Claude: {usage.anthropic.calls} call{usage.anthropic.calls === 1 ? "" : "s"} · ~${usage.anthropic.costUsd.toFixed(2)}
+                </p>
+              )}
               {usage.openai.calls > 0 && (
                 <p>
                   OpenAI: {usage.openai.calls} call{usage.openai.calls === 1 ? "" : "s"} · cost N/A

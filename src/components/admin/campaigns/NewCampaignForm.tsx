@@ -19,17 +19,17 @@ const initialState: CampaignActionState = { status: "idle" };
 export function NewCampaignForm({
   action,
   products,
-  claudeReady,
+  aiReady,
   assignments,
 }: {
   action: Action;
   products: { id: string; name: string }[];
-  claudeReady: boolean;
+  aiReady: boolean;
   assignments: ClientMetaAssignments;
 }) {
   const [state, formAction, pending] = useActionState(action, initialState);
   // Controlled so values survive React's post-action form reset on errors.
-  const [mode, setMode] = useState<"ai" | "blank">(claudeReady ? "ai" : "blank");
+  const [mode, setMode] = useState<"ai" | "blank">(aiReady ? "ai" : "blank");
   const [productId, setProductId] = useState(products[0]?.id ?? "");
   const [hatogStage, setHatogStage] = useState("hook");
   const [objective, setObjective] = useState("");
@@ -44,14 +44,14 @@ export function NewCampaignForm({
     <form action={formAction} className="space-y-4">
       <fieldset className="flex flex-wrap gap-4 text-sm text-slate-700">
         <label className="flex items-center gap-2">
-          <input type="radio" name="mode" value="ai" checked={mode === "ai"} disabled={!claudeReady} onChange={() => setMode("ai")} />
+          <input type="radio" name="mode" value="ai" checked={mode === "ai"} disabled={!aiReady} onChange={() => setMode("ai")} />
           AI strategy
         </label>
         <label className="flex items-center gap-2">
           <input type="radio" name="mode" value="blank" checked={mode === "blank"} onChange={() => setMode("blank")} />
           Blank draft
         </label>
-        {!claudeReady && <span className="text-xs text-amber-700">Connect the AI provider to generate strategies.</span>}
+        {!aiReady && <span className="text-xs text-amber-700">Connect the AI provider to generate strategies.</span>}
       </fieldset>
 
       <div className="grid gap-4 sm:grid-cols-2">

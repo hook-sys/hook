@@ -9,7 +9,6 @@ import { loadBrainConfig } from "@/lib/ai/brain";
 import {
   AI_PROVIDERS,
   AI_PROVIDER_LABELS,
-  LEGACY_CLAUDE_MODEL,
   selectableModels,
   type AIProviderId,
   type StoredModel,
@@ -43,10 +42,12 @@ export default async function AiBrainSettingsPage() {
 
   // Pre-select the saved model only if it's still selectable; otherwise the first discovered one.
   const own = options.filter((m) => m.provider === config.provider);
-  const initialValue: ProviderChoice = ready[config.provider]
-    ? { provider: config.provider, model: own.some((m) => m.id === config.model) ? (config.model as string) : (own[0]?.id ?? "") }
-    : { provider: "", model: "" };
-  const currentModel = config.model ?? (config.provider === "claude" ? `${LEGACY_CLAUDE_MODEL} (built-in default)` : "no model selected");
+  const initialValue: ProviderChoice =
+    config.provider && ready[config.provider]
+      ? { provider: config.provider, model: own.some((m) => m.id === config.model) ? (config.model as string) : (own[0]?.id ?? "") }
+      : { provider: "", model: "" };
+  const current = config.provider ? `${AI_PROVIDER_LABELS[config.provider]} · ${config.model ?? "no model selected"}` : "nothing selected";
+  const currentUnavailable = config.provider && !ready[config.provider];
 
   return (
     <div className="space-y-6">
@@ -103,8 +104,10 @@ export default async function AiBrainSettingsPage() {
         </CardHeader>
         <CardContent className="space-y-3 py-5">
           <p className="text-sm text-slate-500">
-            Current: {AI_PROVIDER_LABELS[config.provider]} · {currentModel}
-            {ready[config.provider] ? "" : ` — ${AI_PROVIDER_LABELS[config.provider]} is not connected, so AI brain features are unavailable until you select a connected provider.`}
+            Current: {current}
+            {config.provider === null && " — AI brain features are unavailable until a provider and model are selected."}
+            {currentUnavailable && " — that provider is not connected, so AI brain features are unavailable until you select a connected provider."}
+            {" "}Saving sends one tiny test request to the chosen model; only a model that answers correctly is saved.
           </p>
           <AiBrainForm action={saveAiBrainAction} models={options} ready={ready} initialValue={initialValue} />
         </CardContent>

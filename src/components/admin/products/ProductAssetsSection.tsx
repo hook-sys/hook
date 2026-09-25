@@ -59,10 +59,10 @@ export async function ProductAssetsSection({
               <Link href="/admin/settings/integrations#google-drive" className="font-medium text-brand-blue hover:underline">
                 Connect Google Drive
               </Link>{" "}
-              to create this client&apos;s folders. Asset references can still be added by link.
+              to create this client&apos;s folders. Drive image/video links can still be added.
             </p>
           ) : (
-            <p>This client has no Drive folders yet. Asset references can still be added by link.</p>
+            <p>This client has no Drive folders yet. Drive image/video links can still be added.</p>
           )}
         </div>
 
@@ -76,6 +76,7 @@ export async function ProductAssetsSection({
                   <div className="flex items-center gap-2">
                     <Badge variant="blue">{PRODUCT_ASSET_TYPE_LABELS[asset.asset_type]}</Badge>
                     <span className="text-sm font-medium text-slate-900">{asset.label ?? "Untitled asset"}</span>
+                    {asset.mime_type && <span className="text-xs text-slate-400">{asset.mime_type}</span>}
                   </div>
                   {asset.url && (
                     <a

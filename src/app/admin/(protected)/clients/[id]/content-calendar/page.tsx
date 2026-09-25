@@ -23,7 +23,7 @@ import { listCalendarItems } from "@/lib/services/content-calendar";
 import { listProducts } from "@/lib/services/products";
 import { HATOG_STAGE_KEYS, HATOG_STAGE_LABELS } from "@/types/ai";
 
-// One structured Claude request can take a few minutes for a 30-day plan.
+// One structured AI brain request can take a few minutes for a 30-day plan.
 export const maxDuration = 300;
 
 export default async function ContentCalendarPage({ params, searchParams }: PageProps<"/admin/clients/[id]/content-calendar">) {
@@ -79,7 +79,7 @@ export default async function ContentCalendarPage({ params, searchParams }: Page
               action={generateCalendarAction.bind(null, client.id)}
               products={activeProducts.map((p) => ({ id: p.id, name: p.name }))}
               defaultStartDate={new Date().toISOString().slice(0, 10)}
-              claudeReady={readiness.brain === "ready"}
+              aiReady={readiness.brain === "ready"}
             />
           )}
         </CardContent>

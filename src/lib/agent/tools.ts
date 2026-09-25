@@ -19,6 +19,7 @@ import { generateCreativeBriefOnly, startCreativeGeneration } from "@/lib/workfl
 import { uploadCreativeToDrive } from "@/lib/workflows/drive-creatives";
 import type { AdminProfile } from "@/types/admin";
 import type { ContentPlatform } from "@/lib/ai/content-calendar";
+import { isFalReferenceMime } from "@/lib/integrations/drive-media";
 
 // Server-only tool implementations. The client ID is fixed by the run (never taken from
 // model input); every DB read uses the caller's session, so RLS applies exactly as in the
@@ -34,7 +35,8 @@ async function creativeInput(clientId: string, input: Record<string, unknown>) {
   if (!isUuid(productId)) throw new ToolError("Invalid product_id. Use an ID from get_products.");
   let reference = "";
   if (input.use_reference_image === true) {
-    const image = (await listProductAssets(clientId, productId)).find((a) => a.asset_type === "image");
+    // First Drive image usable as a Fal.ai reference (JPEG/PNG/WebP).
+    const image = (await listProductAssets(clientId, productId)).find((a) => a.asset_type === "image" && isFalReferenceMime(a.mime_type));
     reference = image?.id ?? "";
   }
   const duration = Number(input.duration_seconds ?? 0);

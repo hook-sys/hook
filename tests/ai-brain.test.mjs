@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import {
   AI_PROVIDERS,
   EMPTY_BRAIN_CONFIG,
-  LEGACY_CLAUDE_MODEL,
   estimateCostUsd,
   filterGeminiModels,
   filterOpenAIModels,
@@ -135,8 +134,15 @@ beforeEach(() => {
 // Routing (pure)
 // ---------------------------------------------------------------------------
 
-test("route: nothing configured keeps the existing Claude default model", () => {
-  assert.deepEqual(resolveRoute(EMPTY_BRAIN_CONFIG), { ok: true, primary: { provider: "claude", model: LEGACY_CLAUDE_MODEL } });
+test("route: nothing selected means no AI brain (no implicit Claude default)", async () => {
+  const r = resolveRoute(EMPTY_BRAIN_CONFIG);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Select an AI Brain provider and model/);
+  claudeReplies(claudeMsg(OK_JSON));
+  stubFetch(() => openAIReply(OK_JSON));
+  await assert.rejects(generate(), /Select an AI Brain provider and model/);
+  assert.equal(fetchCalls.length + claudeRequests.length, 0, "nothing is called when nothing is selected");
+  assert.match(await brainReadiness(), /Select an AI Brain provider/);
 });
 
 test("route: the selected provider + model; a provider without a selected model is an explicit error", () => {
@@ -179,6 +185,14 @@ test("model choice: invalid provider/model rejected; provider/model mismatch rej
 // ---------------------------------------------------------------------------
 // Model discovery
 // ---------------------------------------------------------------------------
+
+test("OpenAI models the app can't call are not selectable (pro = Responses-only, live, GPT-3.5, base GPT-4)", () => {
+  const ids = ["gpt-5.1", "gpt-5.5", "gpt-4o", "gpt-4.1-mini", "o3", "o4-mini", "gpt-5-pro", "gpt-5.2-pro-2025-12-11", "o1-pro", "gpt-live-1", "gpt-3.5-turbo", "gpt-4", "gpt-4-0613", "gpt-4-turbo", "gpt-4-turbo-2024-04-09"];
+  assert.deepEqual(filterOpenAIModels(ids.map((id) => ({ id }))).map((m) => m.id), ["gpt-4.1-mini", "gpt-4o", "gpt-5.1", "gpt-5.5", "o3", "o4-mini"]);
+  const stale = ids.map((id) => ({ provider: "openai", model_id: id, display_name: id, is_available: true, supports_structured: null }));
+  assert.deepEqual(selectableModels(stale, "openai").map((m) => m.model_id).sort(), ["gpt-4.1-mini", "gpt-4o", "gpt-5.1", "gpt-5.5", "o3", "o4-mini"]);
+  assert.match(validateModelChoice("openai", "gpt-5-pro", stale), /not currently available/);
+});
 
 test("discovery filters: only text-generation models are kept", () => {
   const openai = filterOpenAIModels(
@@ -239,7 +253,8 @@ test("discovery: failure leaves the stored list unchanged; unconnected provider 
 // Providers end-to-end through the brain (+ usage logging)
 // ---------------------------------------------------------------------------
 
-test("Claude provider: existing default workflow unchanged; usage + cost logged", async () => {
+test("Claude provider (when selected): structured workflow; usage + cost logged", async () => {
+  setBrain({ provider: "claude", model: "claude-opus-5" });
   claudeReplies(claudeMsg(OK_JSON));
   const r = await generate();
   assert.deepEqual([r.data.headline, r.provider, r.model], ["Hi", "claude", "claude-opus-5"]);
@@ -402,7 +417,8 @@ const agentParams = (callModel, executed) => ({
   sleep: async () => {},
 });
 
-test("AI Agent default: Claude with the same tools, adaptive thinking and limits", async () => {
+test("AI Agent on Claude (when selected): same tools, adaptive thinking and limits", async () => {
+  setBrain({ provider: "claude", model: "claude-opus-5" });
   claudeReplies(
     { model: "claude-opus-5", stop_reason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "tool_use", id: "tu_1", name: "get_products", input: {} }] },
     { model: "claude-opus-5", stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "text", text: "Wallet." }] }
@@ -600,8 +616,13 @@ test("AI Brain settings: one provider + model; OpenAI/Gemini/Claude selectable; 
   resetConnectState();
   const { saveAiBrainAction } = await import("@/lib/actions/ai-settings");
 
+  stubFetch(({ url }) => (url.includes("api.openai.com") ? openAIReply('{"ok":true}') : geminiReply([{ text: '{"ok":true}' }])));
+  claudeReplies(claudeMsg('{"ok":true}'));
   const ok = await saveAiBrainAction(idle, form({ provider: "openai", model: "gpt-5.1" }));
   assert.equal(ok.status, "success", ok.message);
+  assert.equal(fetchCalls.length, 1, "one tiny test request before saving");
+  assert.equal(fetchCalls[0].body.model, "gpt-5.1");
+  assert.deepEqual(fetchCalls[0].body.response_format.json_schema.schema.required, ["ok"]);
   assert.deepEqual(
     [globalThis.__db.ai_brain_settings[0].default_provider, globalThis.__db.ai_brain_settings[0].default_model],
     ["openai", "gpt-5.1"]
@@ -610,9 +631,17 @@ test("AI Brain settings: one provider + model; OpenAI/Gemini/Claude selectable; 
   assert.equal((await generate()).provider, "openai", "the saved selection is used for real requests");
   assert.equal(await brainReadiness(), null);
 
+  stubFetch(({ url }) => (url.includes("api.openai.com") ? openAIReply('{"ok":true}') : geminiReply([{ text: '{"ok":true}' }])));
   assert.equal((await saveAiBrainAction(idle, form({ provider: "gemini", model: "gemini-3-pro" }))).status, "success");
   assert.equal((await saveAiBrainAction(idle, form({ provider: "claude", model: "claude-opus-5" }))).status, "success");
   assert.equal(globalThis.__db.ai_brain_settings.length, 1, "single global selection");
+  assert.equal(globalThis.__db.ai_brain_settings[0].default_provider, "claude");
+
+  // A model that fails the test request is never saved.
+  stubFetch(() => ({ status: 400, body: { error: { message: "This model is only supported in v1/responses" } } }));
+  const failed = await saveAiBrainAction(idle, form({ provider: "openai", model: "gpt-5.1" }));
+  assert.equal(failed.status, "error");
+  assert.match(failed.message, /gpt-5.1 failed the test request, so it was not selected: OpenAI API error \(400\)/);
   assert.equal(globalThis.__db.ai_brain_settings[0].default_provider, "claude");
 
   assert.match((await saveAiBrainAction(idle, form({ provider: "gemini", model: "gpt-5.1" }))).message, /not a Google Gemini model/);

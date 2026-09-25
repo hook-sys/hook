@@ -6,12 +6,9 @@ import { requireSuperAdmin } from "@/lib/auth/session";
 import { getClientById } from "@/lib/services/clients";
 import { getProduct } from "@/lib/services/products";
 import { createClient } from "@/lib/supabase/server";
-import {
-  isProductAssetType,
-  parseAssetLocation,
-  parseProductForm,
-  type ProductFieldErrors,
-} from "@/lib/validation/product";
+import { inspectDriveMedia, isFalReferenceMime } from "@/lib/integrations/drive-media";
+import { IntegrationError } from "@/lib/integrations/types";
+import { parseAssetLocation, parseProductForm, type ProductFieldErrors } from "@/lib/validation/product";
 import { PRODUCT_STATUSES, type ProductStatus } from "@/types/product";
 
 export interface ProductFormState {
@@ -150,30 +147,41 @@ export async function addProductAsset(
   await requireSuperAdmin();
   if (!(await getProduct(clientId, productId))) return { status: "error", message: "Product not found." };
 
-  const assetType = String(formData.get("asset_type") ?? "");
-  if (!isProductAssetType(assetType)) return { status: "error", message: "Select an asset type." };
-
+  // Google Drive is the only asset source.
   const location = parseAssetLocation(String(formData.get("location") ?? ""));
-  if (!location) {
-    return { status: "error", message: "Enter a Google Drive link, a Drive file ID, or an https:// URL." };
-  }
+  if (!location?.driveFileId) return { status: "error", message: "Enter a Google Drive file link or file ID." };
 
   const label = String(formData.get("label") ?? "").trim();
   if (label.length > 200) return { status: "error", message: "Label is too long." };
+
+  // The type comes from the file itself (image or video only), never from user input.
+  let media;
+  try {
+    media = await inspectDriveMedia(location.driveFileId);
+  } catch (error) {
+    return { status: "error", message: error instanceof IntegrationError ? error.message : "Could not check the Google Drive file." };
+  }
 
   const supabase = await createClient();
   const { error } = await supabase.from("product_assets").insert({
     product_id: productId,
     client_id: clientId,
-    asset_type: assetType,
+    asset_type: media.kind,
     drive_file_id: location.driveFileId,
     url: location.url,
+    mime_type: media.mimeType,
     label: label || null,
   });
   if (error) return { status: "error", message: "Could not add the asset reference." };
 
   revalidateProducts(clientId, productId);
-  return { status: "success", message: "Asset reference added." };
+  let note = "";
+  if (media.kind === "image" && !isFalReferenceMime(media.mimeType)) {
+    note = " This image format can't be used as a Fal.ai reference (use JPEG, PNG or WebP).";
+  } else if (media.kind === "image" && !media.publiclyAccessible) {
+    note = " To use it as a Fal.ai reference image, share it as “Anyone with the link” (Viewer).";
+  }
+  return { status: "success", message: `${media.kind === "image" ? "Image" : "Video"} added (${media.mimeType}).${note}` };
 }
 
 export async function removeProductAsset(

@@ -10,11 +10,12 @@ class Query {
     this.table = table;
     this.op = "select";
     this.filters = [];
-    this.single = false;
+    this.singleRow = false;
     this.countOnly = false;
   }
   select(_cols, opts) {
     if (this.op === "select" && opts?.head) this.countOnly = true;
+    if (this.op !== "select") this.returning = true;
     return this;
   }
   eq(col, val) {
@@ -37,11 +38,18 @@ class Query {
   order() {
     return this;
   }
+  or() {
+    return this; // compound OR filters are not modelled (all rows match)
+  }
   limit() {
     return this;
   }
   maybeSingle() {
-    this.single = true;
+    this.singleRow = true;
+    return this;
+  }
+  single() {
+    this.singleRow = true;
     return this;
   }
   insert(row) {
@@ -68,8 +76,10 @@ class Query {
     const rows = (db()[this.table] ??= []);
     const match = (r) => this.filters.every((f) => f(r));
     if (this.op === "insert") {
-      rows.push(...[].concat(this.payload).map((r) => ({ created_at: new Date().toISOString(), ...r })));
-      return { data: null, error: null };
+      const added = [].concat(this.payload).map((r) => ({ id: crypto.randomUUID(), created_at: new Date().toISOString(), ...r }));
+      rows.push(...added);
+      if (!this.returning) return { data: null, error: null };
+      return { data: this.singleRow ? added[0] : added, error: null };
     }
     if (this.op === "upsert") {
       for (const row of [].concat(this.payload)) {
@@ -80,10 +90,11 @@ class Query {
       return { data: null, error: null };
     }
     if (this.op === "update") {
+      const updated = [];
       rows.forEach((r, i) => {
-        if (match(r)) rows[i] = { ...r, ...this.payload };
+        if (match(r)) updated.push((rows[i] = { ...r, ...this.payload }));
       });
-      return { data: null, error: null };
+      return { data: this.returning ? updated : null, error: null };
     }
     if (this.op === "delete") {
       db()[this.table] = rows.filter((r) => !match(r));
@@ -91,7 +102,7 @@ class Query {
     }
     const found = rows.filter(match);
     if (this.countOnly) return { data: null, count: found.length, error: null };
-    return { data: this.single ? (found[0] ?? null) : found, error: null };
+    return { data: this.singleRow ? (found[0] ?? null) : found, error: null };
   }
   then(resolve, reject) {
     try {

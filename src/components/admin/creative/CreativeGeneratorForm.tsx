@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import type { CreativeActionState } from "@/lib/actions/creatives";
-import { falModelFor } from "@/lib/creative/fal-models";
+import { falModelFor, type FalModelSelection } from "@/lib/creative/fal-models";
 import {
   CREATIVE_FORMATS,
   CREATIVE_TYPES_BY_MEDIA,
@@ -31,11 +31,14 @@ export function CreativeGeneratorForm({
   generateAction,
   previewAction,
   canGenerate,
+  falModels,
 }: {
   products: GeneratorProduct[];
   generateAction: Action;
   previewAction?: Action;
   canGenerate: boolean;
+  // The Fal.ai model selected by the Super Admin for each mode.
+  falModels: FalModelSelection;
 }) {
   const [state, formAction, pending] = useActionState(generateAction, initialState);
   const [previewState, previewFormAction, previewPending] = useActionState(
@@ -53,7 +56,7 @@ export function CreativeGeneratorForm({
   const [referenceId, setReferenceId] = useState("");
 
   const images = products.find((p) => p.id === productId)?.images ?? [];
-  const model = falModelFor(media, referenceId !== "");
+  const model = falModelFor(media, referenceId !== "", falModels);
   const busy = pending || previewPending;
 
   const changeMedia = (next: CreativeMedia) => {
@@ -153,9 +156,9 @@ export function CreativeGeneratorForm({
           </Select>
           <p className="mt-1 text-xs text-slate-400">
             {images.length === 0
-              ? "This product has no image assets. Add one to keep the real product in the output."
+              ? "This product has no Drive reference images (JPEG, PNG or WebP). Add one to keep the real product in the output."
               : "Recommended: keeps the real product in the output. Drive files must be shared “Anyone with the link”."}{" "}
-            Model: {model.label}
+            Fal.ai model: {model.label}
           </p>
         </div>
       </div>

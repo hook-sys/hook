@@ -137,6 +137,32 @@ export async function brainAgentTurn(req: AgentWireRequest & { timeoutMs: number
   return { ...turn, provider: ref.provider };
 }
 
+const PROBE_SCHEMA = {
+  type: "object",
+  properties: { ok: { type: "boolean" } },
+  required: ["ok"],
+  additionalProperties: false,
+};
+
+// Sends one tiny structured-output request in exactly the app's request format, so a model
+// is only accepted if it really works (never assumed from the model list). Null = passed.
+export async function verifyBrainModel(ref: ModelRef): Promise<string | null> {
+  try {
+    const raw = await ADAPTERS[ref.provider].structured({
+      system: "Connection check for the Hook Marketing AI brain.",
+      user: 'Reply with the JSON object {"ok": true}.',
+      schema: PROBE_SCHEMA,
+      maxTokens: 2000,
+      timeoutMs: 60_000,
+      model: ref.model,
+    });
+    finishStructured(raw, (v) => ((v as { ok?: unknown })?.ok === true ? { ok: true, value: v } : { ok: false, error: "unexpected reply" }), AI_PROVIDER_LABELS[ref.provider]);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "The model test failed.";
+  }
+}
+
 // Refreshes the discovered model list for a provider. Nothing is invented: rows come only
 // from the provider's API; models no longer returned are marked unavailable (never deleted,
 // so a saved selection stays intact). On failure the stored list is left unchanged.

@@ -14,12 +14,12 @@ export function CalendarGeneratorForm({
   action,
   products,
   defaultStartDate,
-  claudeReady,
+  aiReady,
 }: {
   action: Action;
   products: { id: string; name: string }[];
   defaultStartDate: string;
-  claudeReady: boolean;
+  aiReady: boolean;
 }) {
   const [state, formAction, pending] = useActionState(action, { status: "idle" });
   // Controlled so selections survive React's post-action form reset.
@@ -102,7 +102,7 @@ export function CalendarGeneratorForm({
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" disabled={pending || !claudeReady || platforms.length === 0 || selected.length === 0}>
+        <Button type="submit" disabled={pending || !aiReady || platforms.length === 0 || selected.length === 0}>
           {pending ? "Planning calendar… (up to a few minutes)" : "Generate Calendar"}
         </Button>
         {state.message && (

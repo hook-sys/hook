@@ -54,7 +54,7 @@ export default async function ClientCampaignsPage({ params }: PageProps<"/admin/
           <NewCampaignForm
             action={createCampaignDraft.bind(null, client.id)}
             products={products.filter((p) => p.status !== "archived").map((p) => ({ id: p.id, name: p.name }))}
-            claudeReady={readiness.brain === "ready"}
+            aiReady={readiness.brain === "ready"}
             assignments={assignments}
           />
         </CardContent>
