@@ -17,10 +17,17 @@ import type { AdminProfile } from "@/types/admin";
 // Server-only analytics workflows shared by the Analytics page and the AI agent.
 // Callers must have checked the `analytics` permission.
 
-export async function loadAnalytics(profile: AdminProfile, clientId: string, range: InsightRange, refresh = false) {
+export async function loadAnalytics(
+  profile: AdminProfile,
+  clientId: string,
+  range: InsightRange,
+  refresh = false,
+  adAccountId: string | null = null
+) {
   const client = await getClientById(clientId); // session read: RLS blocks unassigned clients
   if (!client) throw new Error("Client not found.");
-  const { snapshot, adAccountId, cached } = await getClientInsights(profile.id, client.id, range, { refresh });
+  const insights = await getClientInsights(profile.id, client.id, range, { refresh, adAccountId });
+  const { snapshot, cached } = insights;
 
   // Internal campaign -> product/HATOG mapping for this client only (service role read after
   // the access checks above; only IDs, product and stage are used).
@@ -33,15 +40,16 @@ export async function loadAnalytics(profile: AdminProfile, clientId: string, ran
     listProducts(client.id),
   ]);
   const mapped = mapToInternal(snapshot.campaigns, internal ?? [], new Map(products.map((p) => [p.id, p.name])));
-  return { client, snapshot, adAccountId, cached, ...mapped };
+  return { client, snapshot, adAccountId: insights.adAccountId, cached, ...mapped };
 }
 
 export async function generateMarketingReport(
   profile: AdminProfile,
   clientId: string,
-  range: InsightRange
+  range: InsightRange,
+  adAccountId: string | null = null
 ): Promise<{ reportId: string; report: MarketingReport }> {
-  const data = await loadAnalytics(profile, clientId, range);
+  const data = await loadAnalytics(profile, clientId, range, false, adAccountId);
   const facts = buildReportFacts({
     snapshot: data.snapshot as InsightsSnapshot,
     campaignMapping: data.mapping,

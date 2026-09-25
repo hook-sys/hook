@@ -8,7 +8,8 @@ import {
   type MetaObjective,
 } from "@/lib/ai/campaign-strategy";
 import { aiErrorMessage, generateAndLog } from "@/lib/ai/generate";
-import { getClientMetaAssets } from "@/lib/services/client-meta-assets";
+import { pickAssigned } from "@/lib/meta/asset-assignment";
+import { getClientMetaAssignments } from "@/lib/services/meta-assets";
 import { getClientById } from "@/lib/services/clients";
 import { getCreativesByIds, listCreatives } from "@/lib/services/creatives";
 import { getProduct } from "@/lib/services/products";
@@ -22,14 +23,21 @@ import type { WorkflowResult } from "@/lib/workflows/creatives";
 // must have checked the `campaigns` permission. Only INTERNAL drafts are created here —
 // publishing to Meta is a separate, super-admin, explicitly confirmed action.
 
-// Meta references always come from the client's own assignment (never from input); the DB
-// trigger enforces the same rule.
-export async function metaSnapshot(clientId: string) {
-  const assets = await getClientMetaAssets(clientId);
+export interface CampaignMetaSelection {
+  adAccountId?: string | null;
+  pageId?: string | null;
+  instagramAccountId?: string | null;
+}
+
+// Meta references may only be assets assigned to this client (the DB trigger enforces the
+// same rule). A requested asset is used only if assigned; with exactly one assigned asset
+// it is preselected; otherwise it stays empty for the user to choose.
+export async function resolveCampaignMeta(clientId: string, requested: CampaignMetaSelection = {}) {
+  const assigned = await getClientMetaAssignments(clientId);
   return {
-    meta_ad_account_id: assets?.ad_account_id ?? null,
-    meta_page_id: assets?.facebook_page_id ?? null,
-    meta_instagram_account_id: assets?.instagram_account_id ?? null,
+    meta_ad_account_id: pickAssigned(assigned.adAccounts, requested.adAccountId),
+    meta_page_id: pickAssigned(assigned.pages, requested.pageId),
+    meta_instagram_account_id: pickAssigned(assigned.instagramAccounts, requested.instagramAccountId),
   };
 }
 
@@ -41,6 +49,7 @@ export interface CampaignDraftInput {
   notes: string | null;
   name: string | null;
   creativeIds?: string[];
+  meta?: CampaignMetaSelection;
 }
 
 export async function createCampaignDraftCore(
@@ -68,13 +77,22 @@ export async function createCampaignDraftCore(
     }
   }
 
+  const meta = await resolveCampaignMeta(client.id, input.meta);
+  if (
+    (input.meta?.adAccountId && !meta.meta_ad_account_id) ||
+    (input.meta?.pageId && !meta.meta_page_id) ||
+    (input.meta?.instagramAccountId && !meta.meta_instagram_account_id)
+  ) {
+    return { ok: false, message: "Select only Meta assets assigned to this client." };
+  }
+
   const supabase = await createClient();
   const base = {
     client_id: client.id,
     product_id: product.id,
     hatog_stage: input.hatogStage,
     created_by: profile.id,
-    ...(await metaSnapshot(client.id)),
+    ...meta,
   };
 
   let row: Record<string, unknown>;

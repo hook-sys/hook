@@ -1,15 +1,17 @@
-// Pure, dependency-free Meta asset types and validation (unit-testable without Meta).
+// Pure, dependency-free types for assets read from the Meta Graph API. Client assignment
+// validation lives in lib/meta/asset-assignment.ts (central pool model, migration 0016).
 
 export interface MetaNamedAsset {
   id: string;
   name: string;
+  // owned by the Business Manager, or shared with it as a client asset
+  relationship?: "owned" | "client";
 }
 
 export type MetaAssetKind = "adAccounts" | "pages" | "instagramAccounts";
 
-// Assets visible to the connected Business Manager. `failed` marks asset types that
-// could not be loaded (e.g. missing permission) — those can't be validated, so they
-// can't be assigned either.
+// Assets visible to one Business Manager. `failed` marks asset types that could not be
+// loaded (e.g. missing permission) — those are not synced, so they're never deactivated.
 export interface MetaAssetSummary {
   adAccounts: MetaNamedAsset[];
   pages: MetaNamedAsset[];
@@ -18,65 +20,8 @@ export interface MetaAssetSummary {
   errors: string[];
 }
 
-export interface MetaAssetSelection {
-  adAccountId: string | null;
-  facebookPageId: string | null;
-  instagramAccountId: string | null;
-}
-
-export interface ResolvedMetaAssets {
-  adAccount: MetaNamedAsset | null;
-  facebookPage: MetaNamedAsset | null;
-  instagramAccount: MetaNamedAsset | null;
-}
-
-const ID_FORMAT: Record<MetaAssetKind, RegExp> = {
-  adAccounts: /^act_\d+$/,
-  pages: /^\d+$/,
-  instagramAccounts: /^\d+$/,
-};
-
 export const META_ASSET_LABEL: Record<MetaAssetKind, string> = {
   adAccounts: "Ad Account",
   pages: "Facebook Page",
   instagramAccounts: "Instagram Account",
 };
-
-type Pick = { ok: true; asset: MetaNamedAsset | null } | { ok: false; error: string };
-
-function pickAsset(kind: MetaAssetKind, id: string | null, available: MetaAssetSummary): Pick {
-  if (!id) return { ok: true, asset: null };
-  const label = META_ASSET_LABEL[kind];
-  if (!ID_FORMAT[kind].test(id)) return { ok: false, error: `Invalid ${label} ID.` };
-  if (available.failed[kind]) {
-    return { ok: false, error: `Could not verify the ${label} with Meta right now. Try again later.` };
-  }
-  const asset = available[kind].find((a) => a.id === id);
-  if (!asset) {
-    return { ok: false, error: `The selected ${label} is not available in the connected Business Manager.` };
-  }
-  return { ok: true, asset };
-}
-
-// Accepts only IDs present in the live asset lists of the connected Business Manager.
-// Names come from Meta, never from the submitted form.
-export function resolveMetaAssetSelection(
-  selection: MetaAssetSelection,
-  available: MetaAssetSummary
-): { ok: true; assets: ResolvedMetaAssets } | { ok: false; error: string } {
-  const adAccount = pickAsset("adAccounts", selection.adAccountId, available);
-  if (!adAccount.ok) return adAccount;
-  const facebookPage = pickAsset("pages", selection.facebookPageId, available);
-  if (!facebookPage.ok) return facebookPage;
-  const instagramAccount = pickAsset("instagramAccounts", selection.instagramAccountId, available);
-  if (!instagramAccount.ok) return instagramAccount;
-
-  return {
-    ok: true,
-    assets: {
-      adAccount: adAccount.asset,
-      facebookPage: facebookPage.asset,
-      instagramAccount: instagramAccount.asset,
-    },
-  };
-}

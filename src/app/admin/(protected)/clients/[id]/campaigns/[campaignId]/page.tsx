@@ -9,7 +9,7 @@ import { PublishPanel } from "@/components/admin/campaigns/PublishPanel";
 import { CampaignStatusBadge } from "@/components/admin/creative/CreativeStatusBadge";
 import {
   publishCampaign,
-  refreshCampaignMetaAssets,
+  setCampaignMetaAssets,
   setCampaignCreatives,
   setCampaignStatus,
   updateCampaignDetails,
@@ -20,7 +20,8 @@ import { CAMPAIGN_STATUS_LABELS, canTransitionCampaign, type CampaignStatus } fr
 import { getMetaConnectionState, isMetaPublishingEnabled } from "@/lib/integrations/meta";
 import { publishBlockers } from "@/lib/meta/ads-payloads";
 import { getCampaign, getCampaignCreativeIds } from "@/lib/services/campaigns";
-import { getClientMetaAssets } from "@/lib/services/client-meta-assets";
+import { getClientMetaAssignments } from "@/lib/services/meta-assets";
+import { CampaignMetaAssetsForm } from "@/components/admin/campaigns/CampaignMetaAssetsForm";
 import { getClientById } from "@/lib/services/clients";
 import { getCreativesByIds, listCreatives } from "@/lib/services/creatives";
 import { getProduct } from "@/lib/services/products";
@@ -53,12 +54,12 @@ export default async function CampaignDetailPage({ params }: PageProps<"/admin/c
   const campaign = await getCampaign(client.id, campaignId);
   if (!campaign) notFound();
 
-  const [product, selectedIds, readyCreatives, meta, assets] = await Promise.all([
+  const [product, selectedIds, readyCreatives, meta, assignments] = await Promise.all([
     getProduct(client.id, campaign.product_id),
     getCampaignCreativeIds(client.id, campaign.id),
     listCreatives(client.id, { status: "ready" }),
     getMetaConnectionState(),
-    getClientMetaAssets(client.id),
+    getClientMetaAssignments(client.id),
   ]);
   const selected = await getCreativesByIds(client.id, selectedIds);
   const editable = campaign.status === "draft" || campaign.status === "ready_for_review";
@@ -83,11 +84,7 @@ export default async function CampaignDetailPage({ params }: PageProps<"/admin/c
     : [];
 
   const allowedTransitions = STATUS_ACTIONS.filter((a) => canTransitionCampaign(campaign.status, a.to, profile.role));
-  const metaMismatch =
-    assets &&
-    (campaign.meta_ad_account_id !== assets.ad_account_id ||
-      campaign.meta_page_id !== assets.facebook_page_id ||
-      campaign.meta_instagram_account_id !== assets.instagram_account_id);
+  const assetName = (list: { id: string; name: string }[], id: string | null) => (id ? (list.find((a) => a.id === id)?.name ?? id) : "—");
 
   return (
     <div className="space-y-6">
@@ -120,7 +117,7 @@ export default async function CampaignDetailPage({ params }: PageProps<"/admin/c
         )}
       </div>
 
-      <MetaReadinessNotice metaConnected={meta.connected} assets={assets} clientId={client.id} isSuperAdmin={isSuperAdmin} />
+      <MetaReadinessNotice metaConnected={meta.connected} assignments={assignments} clientId={client.id} isSuperAdmin={isSuperAdmin} />
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
@@ -204,9 +201,9 @@ export default async function CampaignDetailPage({ params }: PageProps<"/admin/c
             </CardHeader>
             <CardContent className="space-y-3 py-6">
               <dl className="space-y-3">
-                <Row label="Ad Account">{campaign.meta_ad_account_id ?? "—"}</Row>
-                <Row label="Facebook Page">{campaign.meta_page_id ?? "—"}</Row>
-                <Row label="Instagram">{campaign.meta_instagram_account_id ?? "—"}</Row>
+                <Row label="Ad Account">{assetName(assignments.adAccounts, campaign.meta_ad_account_id)}</Row>
+                <Row label="Facebook Page">{assetName(assignments.pages, campaign.meta_page_id)}</Row>
+                <Row label="Instagram">{assetName(assignments.instagramAccounts, campaign.meta_instagram_account_id)}</Row>
                 {campaign.meta_campaign_id && (
                   <Row label="Meta IDs">
                     Campaign {campaign.meta_campaign_id}
@@ -215,12 +212,16 @@ export default async function CampaignDetailPage({ params }: PageProps<"/admin/c
                   </Row>
                 )}
               </dl>
-              <p className="text-xs text-slate-400">Always this client&apos;s assigned assets; other clients&apos; assets are rejected.</p>
-              {metaMismatch && editable && (
-                <ActionButton
-                  action={refreshCampaignMetaAssets.bind(null, client.id, campaign.id)}
-                  label="Use Current Assignment"
-                  pendingLabel="Refreshing..."
+              <p className="text-xs text-slate-400">Only assets assigned to this client can be used; other assets are rejected.</p>
+              {editable && (
+                <CampaignMetaAssetsForm
+                  action={setCampaignMetaAssets.bind(null, client.id, campaign.id)}
+                  assignments={assignments}
+                  initial={{
+                    adAccountId: campaign.meta_ad_account_id,
+                    pageId: campaign.meta_page_id,
+                    instagramAccountId: campaign.meta_instagram_account_id,
+                  }}
                 />
               )}
             </CardContent>

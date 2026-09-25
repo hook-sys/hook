@@ -1,100 +1,127 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { assignClientMetaAssets, type MetaAssetActionState } from "@/lib/actions/client-meta-assets";
-import type { MetaAssetSummary, MetaNamedAsset } from "@/lib/integrations/meta-assets";
+import type { ClientMetaAssignments, MetaAssetPool, PoolAsset } from "@/lib/meta/asset-assignment";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 
 const initialState: MetaAssetActionState = { status: "idle" };
 
-function AssetSelect({
-  id,
+function AssetChecklist({
+  name,
   label,
   options,
-  current,
-  failed,
-  format,
+  checked,
+  onToggle,
+  format = (a) => a.name,
 }: {
-  id: string;
+  name: string;
   label: string;
-  options: MetaNamedAsset[];
-  current: MetaNamedAsset | null;
-  failed: boolean;
-  format: (asset: MetaNamedAsset) => string;
+  options: PoolAsset[];
+  checked: string[];
+  onToggle: (id: string) => void;
+  format?: (a: PoolAsset) => string;
 }) {
-  // Keep a no-longer-available assignment visible so the admin sees it and must change it.
-  const currentMissing = current && !options.some((o) => o.id === current.id);
-
   return (
-    <div>
-      <Label htmlFor={id}>{label}</Label>
-      <Select id={id} name={id} defaultValue={current?.id ?? ""} disabled={failed && !current}>
-        <option value="">— None —</option>
-        {currentMissing && <option value={current.id}>{format(current)} (unavailable)</option>}
-        {options.map((o) => (
-          <option key={o.id} value={o.id}>
-            {format(o)}
-          </option>
-        ))}
-      </Select>
-      {failed ? (
-        <p className="mt-1 text-xs text-amber-700">Could not load {label.toLowerCase()}s from Meta.</p>
+    <fieldset>
+      <legend className="mb-1.5 text-sm font-medium text-slate-700">{label}</legend>
+      {options.length === 0 ? (
+        <p className="text-xs text-slate-400">None in this Business Manager.</p>
       ) : (
-        options.length === 0 && <p className="mt-1 text-xs text-slate-400">None available in the Business Manager.</p>
+        <div className="space-y-1">
+          {options.map((o) => (
+            <label key={o.id} className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" name={name} value={o.id} checked={checked.includes(o.id)} onChange={() => onToggle(o.id)} />
+              <span>
+                {format(o)}
+                {!o.is_active && <span className="text-xs text-amber-700"> (no longer in Meta)</span>}
+              </span>
+            </label>
+          ))}
+        </div>
       )}
-    </div>
+    </fieldset>
   );
 }
 
+// Super Admin: pick a Business Manager from the central pool, then which of ITS assets this
+// client may use. Only pool assets are selectable; the server re-validates everything.
 export function MetaAssetAssignmentForm({
   clientId,
-  available,
-  current,
+  pool,
+  assignments,
 }: {
   clientId: string;
-  available: MetaAssetSummary;
-  current: { adAccount: MetaNamedAsset | null; facebookPage: MetaNamedAsset | null; instagramAccount: MetaNamedAsset | null };
+  pool: MetaAssetPool;
+  assignments: ClientMetaAssignments;
 }) {
   const [state, formAction, pending] = useActionState(assignClientMetaAssets.bind(null, clientId), initialState);
+  const businesses = pool.businesses.filter((b) => b.is_active || assignments.businesses.some((a) => a.business_id === b.business_id));
+  const [businessId, setBusinessId] = useState(assignments.businesses[0]?.business_id ?? businesses[0]?.business_id ?? "");
+
+  // Assets of the selected BM: active ones, plus any still assigned to this client.
+  const forBusiness = (list: PoolAsset[], assigned: { id: string }[]) =>
+    list.filter((a) => a.business_id === businessId && (a.is_active || assigned.some((x) => x.id === a.id)));
+  const assignedIn = (assigned: { business_id: string; id: string }[]) => assigned.filter((a) => a.business_id === businessId).map((a) => a.id);
+
+  const [selected, setSelected] = useState(() => ({
+    ad: assignedIn(assignments.adAccounts),
+    page: assignedIn(assignments.pages),
+    ig: assignedIn(assignments.instagramAccounts),
+  }));
+  const changeBusiness = (id: string) => {
+    setBusinessId(id);
+    const inBm = (assigned: { business_id: string; id: string }[]) => assigned.filter((a) => a.business_id === id).map((a) => a.id);
+    setSelected({ ad: inBm(assignments.adAccounts), page: inBm(assignments.pages), ig: inBm(assignments.instagramAccounts) });
+  };
+  const toggle = (key: "ad" | "page" | "ig") => (id: string) =>
+    setSelected((s) => ({ ...s, [key]: s[key].includes(id) ? s[key].filter((x) => x !== id) : [...s[key], id] }));
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form action={formAction} className="space-y-4 border-t border-slate-100 pt-4">
+      <div className="sm:w-80">
+        <Label htmlFor="business_id">Business Manager</Label>
+        <Select id="business_id" name="business_id" value={businessId} onChange={(e) => changeBusiness(e.target.value)}>
+          {businesses.map((b) => (
+            <option key={b.business_id} value={b.business_id}>
+              {b.name}
+              {assignments.businesses.some((a) => a.business_id === b.business_id) ? " (assigned)" : ""}
+            </option>
+          ))}
+        </Select>
+      </div>
       <div className="grid gap-4 md:grid-cols-3">
-        <AssetSelect
-          id="ad_account_id"
-          label="Ad Account"
-          options={available.adAccounts}
-          current={current.adAccount}
-          failed={available.failed.adAccounts}
-          format={(a) => `${a.name} (${a.id.replace(/^act_/, "")})`}
+        <AssetChecklist
+          name="ad_account_ids"
+          label="Ad Accounts"
+          options={forBusiness(pool.adAccounts, assignments.adAccounts)}
+          checked={selected.ad}
+          onToggle={toggle("ad")}
         />
-        <AssetSelect
-          id="facebook_page_id"
-          label="Facebook Page"
-          options={available.pages}
-          current={current.facebookPage}
-          failed={available.failed.pages}
-          format={(a) => a.name}
+        <AssetChecklist
+          name="page_ids"
+          label="Facebook Pages"
+          options={forBusiness(pool.pages, assignments.pages)}
+          checked={selected.page}
+          onToggle={toggle("page")}
         />
-        <AssetSelect
-          id="instagram_account_id"
-          label="Instagram Account"
-          options={available.instagramAccounts}
-          current={current.instagramAccount}
-          failed={available.failed.instagramAccounts}
+        <AssetChecklist
+          name="instagram_account_ids"
+          label="Instagram Accounts"
+          options={forBusiness(pool.instagramAccounts, assignments.instagramAccounts)}
+          checked={selected.ig}
+          onToggle={toggle("ig")}
           format={(a) => `@${a.name}`}
         />
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" size="sm" disabled={pending}>
-          {pending ? "Saving..." : "Save Meta Assets"}
+        <Button type="submit" size="sm" disabled={pending || !businessId}>
+          {pending ? "Saving..." : "Assign"}
         </Button>
         {!pending && state.message && (
-          <p className={state.status === "error" ? "text-sm text-red-600" : "text-sm text-emerald-600"}>
-            {state.message}
-          </p>
+          <p className={state.status === "error" ? "text-sm text-red-600" : "text-sm text-emerald-600"}>{state.message}</p>
         )}
       </div>
     </form>

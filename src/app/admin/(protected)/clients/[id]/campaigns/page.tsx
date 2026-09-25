@@ -10,7 +10,7 @@ import { getAiProviderReadiness } from "@/lib/ai/usage";
 import { requirePermission } from "@/lib/auth/session";
 import { getMetaConnectionState } from "@/lib/integrations/meta";
 import { listCampaigns } from "@/lib/services/campaigns";
-import { getClientMetaAssets } from "@/lib/services/client-meta-assets";
+import { getClientMetaAssignments } from "@/lib/services/meta-assets";
 import { getClientById } from "@/lib/services/clients";
 import { listProducts } from "@/lib/services/products";
 
@@ -20,12 +20,12 @@ export default async function ClientCampaignsPage({ params }: PageProps<"/admin/
   const client = await getClientById(id);
   if (!client) notFound();
 
-  const [campaigns, products, readiness, meta, assets] = await Promise.all([
+  const [campaigns, products, readiness, meta, assignments] = await Promise.all([
     listCampaigns(client.id),
     listProducts(client.id),
     getAiProviderReadiness(),
     getMetaConnectionState(),
-    getClientMetaAssets(client.id),
+    getClientMetaAssignments(client.id),
   ]);
   const productName = new Map(products.map((p) => [p.id, p.name]));
 
@@ -41,7 +41,7 @@ export default async function ClientCampaignsPage({ params }: PageProps<"/admin/
 
       <MetaReadinessNotice
         metaConnected={meta.connected}
-        assets={assets}
+        assignments={assignments}
         clientId={client.id}
         isSuperAdmin={profile.role === "admin"}
       />
@@ -55,6 +55,7 @@ export default async function ClientCampaignsPage({ params }: PageProps<"/admin/
             action={createCampaignDraft.bind(null, client.id)}
             products={products.filter((p) => p.status !== "archived").map((p) => ({ id: p.id, name: p.name }))}
             claudeReady={readiness.claude === "ready"}
+            assignments={assignments}
           />
         </CardContent>
       </Card>

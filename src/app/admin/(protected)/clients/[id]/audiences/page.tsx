@@ -24,9 +24,11 @@ import {
   audienceHealth,
   isAutomatedAudienceType,
   planMetaAudience,
+  audienceSourceKind,
 } from "@/lib/meta/audiences";
 import { listAudiences } from "@/lib/services/audiences";
-import { getClientMetaAssets } from "@/lib/services/client-meta-assets";
+import { getClientMetaAssignments } from "@/lib/services/meta-assets";
+import { CreateAudienceInMetaForm } from "@/components/admin/audiences/CreateAudienceInMetaForm";
 import { getClientById } from "@/lib/services/clients";
 import { HATOG_STAGE_LABELS } from "@/types/ai";
 
@@ -40,15 +42,16 @@ export default async function AudiencesPage({ params, searchParams }: PageProps<
   if (!client) notFound();
 
   const showArchived = (await searchParams).archived === "1";
-  const [audiences, meta, assets] = await Promise.all([
+  const [audiences, meta, assignments] = await Promise.all([
     listAudiences(client.id, { includeArchived: showArchived }),
     getMetaConnectionState(),
-    getClientMetaAssets(client.id),
+    getClientMetaAssignments(client.id),
   ]);
+  // Only assets assigned to this client; with several, the admin picks one when creating.
   const refs = {
-    adAccountId: assets?.ad_account_id ?? null,
-    pageId: assets?.facebook_page_id ?? null,
-    instagramId: assets?.instagram_account_id ?? null,
+    adAccountId: assignments.adAccounts[0]?.id ?? null,
+    pageId: assignments.pages[0]?.id ?? null,
+    instagramId: assignments.instagramAccounts[0]?.id ?? null,
   };
   const publishingEnabled = isMetaPublishingEnabled();
 
@@ -70,7 +73,7 @@ export default async function AudiencesPage({ params, searchParams }: PageProps<
         </p>
       </div>
 
-      <MetaReadinessNotice metaConnected={meta.connected} assets={assets} clientId={client.id} isSuperAdmin={isSuperAdmin} />
+      <MetaReadinessNotice metaConnected={meta.connected} assignments={assignments} clientId={client.id} isSuperAdmin={isSuperAdmin} />
 
       <Card>
         <CardHeader>
@@ -160,11 +163,12 @@ export default async function AudiencesPage({ params, searchParams }: PageProps<
                       (blocker ? (
                         <span className="inline-flex h-8 items-center rounded-md bg-slate-100 px-3 text-xs text-slate-500">{blocker}</span>
                       ) : (
-                        <ActionButton
+                        <CreateAudienceInMetaForm
                           action={createAudienceInMeta.bind(null, client.id, a.id)}
-                          label="Create in Meta"
-                          pendingLabel="Creating..."
-                          variant="primary"
+                          adAccounts={assignments.adAccounts}
+                          pages={assignments.pages}
+                          instagramAccounts={assignments.instagramAccounts}
+                          sourceKind={audienceSourceKind(a.audience_type)}
                           confirmMessage={`Create "${a.name}" in the client's Meta ad account? No campaign or spend will start.`}
                         />
                       ))}

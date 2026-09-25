@@ -1,13 +1,12 @@
 import Link from "next/link";
 import { requireSuperAdmin } from "@/lib/auth/session";
-import { disconnectGoogleDriveAction, disconnectMetaAction } from "@/lib/actions/integrations";
+import { disconnectGoogleDriveAction, disconnectMetaAction, syncMetaAssetPoolAction } from "@/lib/actions/integrations";
 import { GOOGLE_ENV_VARS, META_ENV_VARS, missingEnvVars } from "@/lib/integrations/env";
-import { getMetaAssets, listMetaBusinesses, type MetaAssetSummary, type MetaNamedAsset } from "@/lib/integrations/meta";
 import { listIntegrations } from "@/lib/integrations/store";
-import { IntegrationError } from "@/lib/integrations/types";
+import type { MetaAssetPool } from "@/lib/meta/asset-assignment";
+import { listMetaAssetPool } from "@/lib/services/meta-assets";
 import { ActionButton } from "@/components/admin/ActionButton";
 import { ApiKeyIntegrationPanel } from "@/components/admin/integrations/ApiKeyIntegrationPanel";
-import { MetaBusinessSelect } from "@/components/admin/integrations/MetaBusinessSelect";
 import {
   DetailRow,
   formatTimestamp,
@@ -31,7 +30,7 @@ const BANNERS: Record<string, { tone: "success" | "error"; text: string }> = {
 const CONNECT_LINK =
   "inline-flex h-9 items-center justify-center rounded-md bg-brand-red px-3 text-sm font-semibold text-white transition-colors hover:bg-brand-red-dark";
 
-function AssetList({ label, items }: { label: string; items: MetaNamedAsset[] }) {
+function AssetList({ label, items }: { label: string; items: { id: string; name: string }[] }) {
   return (
     <div className="rounded-md border border-slate-200 p-3">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -62,17 +61,9 @@ export default async function IntegrationsPage({ searchParams }: PageProps<"/adm
   const googleMissing = missingEnvVars(GOOGLE_ENV_VARS);
   const metaMissing = missingEnvVars(META_ENV_VARS);
 
-  let metaBusinesses: MetaNamedAsset[] | null = null;
-  let metaAssets: MetaAssetSummary | null = null;
-  let metaLoadError: string | null = null;
-  if (meta.status === "connected" && metaMissing.length === 0) {
-    try {
-      if (meta.config.business_id) metaAssets = await getMetaAssets(meta.config.business_id);
-      else metaBusinesses = await listMetaBusinesses();
-    } catch (error) {
-      metaLoadError = error instanceof IntegrationError ? error.message : "Could not load Meta assets.";
-    }
-  }
+  // Central Meta asset pool (synced from the connected Meta account; stored in Supabase).
+  const metaPool: MetaAssetPool | null = meta.status !== "not_connected" && metaMissing.length === 0 ? await listMetaAssetPool() : null;
+  const activeBusinesses = metaPool?.businesses.filter((b) => b.is_active) ?? [];
 
   const bannerKey =
     typeof params.connected === "string"
@@ -158,26 +149,31 @@ export default async function IntegrationsPage({ searchParams }: PageProps<"/adm
           ) : (
             <div className="space-y-3">
               <DetailRow label="Meta user" value={meta.config.account_name ?? "—"} />
-              <DetailRow label="Business Manager" value={meta.config.business_name ?? "Not selected"} />
               <DetailRow label="Connected" value={formatTimestamp(meta.connected_at) ?? "—"} />
               {meta.config.expires_at && (
                 <DetailRow label="Token expires" value={formatTimestamp(meta.config.expires_at)} />
               )}
               {meta.config.last_error && <p className="text-sm text-red-600">{meta.config.last_error}</p>}
-              {metaLoadError && <p className="text-sm text-red-600">{metaLoadError}</p>}
-              {metaBusinesses && <MetaBusinessSelect businesses={metaBusinesses} />}
-              {metaAssets && (
+              {metaPool && (
                 <div className="space-y-2">
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    <AssetList label="Ad accounts" items={metaAssets.adAccounts} />
-                    <AssetList label="Pages" items={metaAssets.pages} />
-                    <AssetList label="Instagram" items={metaAssets.instagramAccounts} />
-                  </div>
-                  {metaAssets.errors.map((e) => (
-                    <p key={e} className="text-xs text-amber-700">
-                      {e}
-                    </p>
-                  ))}
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Meta Asset Pool <span className="text-slate-600">({activeBusinesses.length} Business Managers)</span>
+                  </p>
+                  {activeBusinesses.length === 0 ? (
+                    <p className="text-sm text-slate-500">No Business Managers synced yet. Use Sync Meta Assets.</p>
+                  ) : (
+                    activeBusinesses.map((b) => (
+                      <div key={b.business_id} className="space-y-1">
+                        <p className="text-sm font-medium text-slate-800">{b.name}</p>
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <AssetList label="Ad accounts" items={metaPool.adAccounts.filter((a) => a.business_id === b.business_id && a.is_active)} />
+                          <AssetList label="Pages" items={metaPool.pages.filter((a) => a.business_id === b.business_id && a.is_active)} />
+                          <AssetList label="Instagram" items={metaPool.instagramAccounts.filter((a) => a.business_id === b.business_id && a.is_active)} />
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  <p className="text-xs text-slate-400">Assign pool assets to clients from each client&apos;s Meta Assets section.</p>
                 </div>
               )}
               <div className="flex flex-wrap items-start gap-2">
@@ -185,6 +181,9 @@ export default async function IntegrationsPage({ searchParams }: PageProps<"/adm
                   <a href="/api/integrations/meta/connect" className={CONNECT_LINK}>
                     Reconnect
                   </a>
+                )}
+                {meta.status === "connected" && (
+                  <ActionButton action={syncMetaAssetPoolAction} label="Sync Meta Assets" pendingLabel="Syncing..." />
                 )}
                 <ActionButton
                   action={disconnectMetaAction}

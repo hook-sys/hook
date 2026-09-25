@@ -24,15 +24,3 @@ export interface Client {
   updated_at: string;
 }
 
-export interface ClientMetaAssets {
-  client_id: string;
-  business_id: string;
-  business_name: string | null;
-  ad_account_id: string | null;
-  ad_account_name: string | null;
-  facebook_page_id: string | null;
-  facebook_page_name: string | null;
-  instagram_account_id: string | null;
-  instagram_username: string | null;
-  updated_at: string;
-}

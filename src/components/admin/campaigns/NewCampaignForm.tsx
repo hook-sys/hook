@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { HATOG_STAGE_KEYS, HATOG_STAGE_LABELS } from "@/types/ai";
+import type { ClientMetaAssignments } from "@/lib/meta/asset-assignment";
+import { CampaignMetaAssetFields } from "@/components/admin/campaigns/CampaignMetaAssetFields";
 
 type Action = (prev: CampaignActionState, formData: FormData) => Promise<CampaignActionState>;
 
@@ -18,10 +20,12 @@ export function NewCampaignForm({
   action,
   products,
   claudeReady,
+  assignments,
 }: {
   action: Action;
   products: { id: string; name: string }[];
   claudeReady: boolean;
+  assignments: ClientMetaAssignments;
 }) {
   const [state, formAction, pending] = useActionState(action, initialState);
   // Controlled so values survive React's post-action form reset on errors.
@@ -95,6 +99,11 @@ export function NewCampaignForm({
           </div>
         )}
       </div>
+
+      <fieldset className="space-y-2">
+        <legend className="text-xs font-semibold uppercase tracking-wide text-slate-400">Meta Assets (assigned to this client)</legend>
+        <CampaignMetaAssetFields assignments={assignments} />
+      </fieldset>
 
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={pending}>

@@ -10,6 +10,7 @@ const suites = [
   ["meta-ads.test.mjs", "meta"],
   ["phase10_15.test.mjs", ""],
   ["providers.test.mjs", "store"],
+  ["meta-assets.test.mjs", ""],
 ];
 let failed = 0;
 for (const [file, fakes] of suites) {

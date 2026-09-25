@@ -1,16 +1,16 @@
 import Link from "next/link";
-import type { ClientMetaAssets } from "@/types/client";
+import { hasUsableMetaAssets, type ClientMetaAssignments } from "@/lib/meta/asset-assignment";
 
-// Campaign drafts can be written without Meta; publishing needs a connection and the
-// client's ad account + Page.
+// Campaign drafts can be written without Meta; publishing needs a connection and an
+// ad account + Page assigned to this client from the central Meta asset pool.
 export function MetaReadinessNotice({
   metaConnected,
-  assets,
+  assignments,
   clientId,
   isSuperAdmin,
 }: {
   metaConnected: boolean;
-  assets: ClientMetaAssets | null;
+  assignments: ClientMetaAssignments;
   clientId: string;
   isSuperAdmin: boolean;
 }) {
@@ -19,7 +19,7 @@ export function MetaReadinessNotice({
   if (!metaConnected) {
     message = "Connect Meta.";
     href = "/admin/settings/integrations";
-  } else if (!assets?.ad_account_id || !assets.facebook_page_id) {
+  } else if (!hasUsableMetaAssets(assignments)) {
     message = "Assign Meta assets first.";
     href = `/admin/clients/${clientId}#meta-assets`;
   }
@@ -27,8 +27,8 @@ export function MetaReadinessNotice({
 
   return (
     <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-      <strong>{message}</strong> Drafts can still be prepared; publishing needs a Meta connection and this client&apos;s ad
-      account and Page.{" "}
+      <strong>{message}</strong> Drafts can still be prepared; publishing needs a Meta connection and an ad account and Page
+      assigned to this client.{" "}
       {isSuperAdmin && href ? (
         <Link href={href} className="font-medium underline">
           Fix it

@@ -16,6 +16,12 @@ export interface AnalyticsActionState {
 
 const analyticsPath = (clientId: string) => `/admin/clients/${clientId}/analytics`;
 
+// Ad account to analyze; must be assigned to the client (validated in getClientInsights).
+function readAccount(formData: FormData): string | null {
+  const v = String(formData.get("account") ?? "").trim();
+  return /^act_\d+$/.test(v) ? v : null;
+}
+
 function readRange(formData: FormData) {
   return resolveRange(
     String(formData.get("preset") ?? ""),
@@ -33,7 +39,7 @@ export async function refreshAnalyticsAction(
   const range = readRange(formData);
   if (!range.ok) return { status: "error", message: range.error };
   try {
-    const result = await loadAnalytics(profile, clientId, range.range, true);
+    const result = await loadAnalytics(profile, clientId, range.range, true, readAccount(formData));
     revalidatePath(analyticsPath(clientId));
     return { status: "success", message: result.cached ? "Data was refreshed less than 2 minutes ago." : "Refreshed from Meta." };
   } catch (error) {
@@ -52,7 +58,7 @@ export async function generateReportAction(
   if (!range.ok) return { status: "error", message: range.error };
   let reportId: string;
   try {
-    reportId = (await generateMarketingReport(profile, clientId, range.range)).reportId;
+    reportId = (await generateMarketingReport(profile, clientId, range.range, readAccount(formData))).reportId;
   } catch (error) {
     if (error instanceof AnalyticsUnavailableError) return { status: "error", message: error.message };
     return { status: "error", message: aiErrorMessage(error, "Could not generate the report.") };
@@ -61,5 +67,7 @@ export async function generateReportAction(
   const r = range.range;
   const query = new URLSearchParams(r.preset ? { preset: r.preset } : { preset: "custom", since: r.since, until: r.until });
   query.set("report", reportId);
+  const account = readAccount(formData);
+  if (account) query.set("account", account);
   redirect(`${analyticsPath(clientId)}?${query}#ai-reports`);
 }

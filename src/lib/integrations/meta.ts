@@ -10,13 +10,12 @@ import {
 import { IntegrationError } from "@/lib/integrations/types";
 import {
   META_ASSET_LABEL,
-  resolveMetaAssetSelection,
   type MetaAssetKind,
-  type MetaAssetSelection,
   type MetaAssetSummary,
   type MetaNamedAsset,
-  type ResolvedMetaAssets,
 } from "@/lib/integrations/meta-assets";
+import { logEvent } from "@/lib/observability";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 const GRAPH_VERSION = "v26.0";
 const GRAPH_API = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -225,8 +224,6 @@ export async function connectMeta(code: string, actorId: string): Promise<void> 
   const config = requireConfig();
   const token = await exchangeCode(config, code);
   const me = await graph<{ id: string; name: string }>("/me", token.access_token, { fields: "id,name" });
-  const businesses = await listMetaBusinesses(token.access_token);
-  const business = businesses.length === 1 ? businesses[0] : undefined;
 
   await setIntegrationSecret("meta", JSON.stringify(token));
   await saveIntegration(
@@ -236,8 +233,6 @@ export async function connectMeta(code: string, actorId: string): Promise<void> 
       config: {
         account_id: me.id,
         account_name: me.name,
-        business_id: business?.id,
-        business_name: business?.name,
         expires_at: token.expires_at ? new Date(token.expires_at).toISOString() : undefined,
         last_error: null,
       },
@@ -247,22 +242,6 @@ export async function connectMeta(code: string, actorId: string): Promise<void> 
   );
 }
 
-// Only businesses the stored token can actually see are accepted.
-export async function selectMetaBusiness(businessId: string, actorId: string): Promise<void> {
-  const business = (await listMetaBusinesses()).find((b) => b.id === businessId);
-  if (!business) throw new IntegrationError("That Business Manager is not accessible with the current connection.");
-
-  const current = await getIntegration("meta");
-  await saveIntegration(
-    "meta",
-    {
-      status: current.status,
-      config: { ...current.config, business_id: business.id, business_name: business.name },
-      connected_at: current.connected_at,
-    },
-    actorId
-  );
-}
 
 // Assets owned by or shared (as client assets) with the Business Manager. Each type is
 // fetched independently so one missing permission doesn't hide the others; a type with
@@ -283,7 +262,7 @@ export async function getMetaAssets(businessId: string): Promise<MetaAssetSummar
       paths.map((p) => graph<{ data: Record<string, string>[] }>(p, token, { fields, limit: "100" }))
     );
     const items = new Map<string, MetaNamedAsset>();
-    for (const result of results) {
+    for (const [index, result] of results.entries()) {
       if (result.status === "rejected") {
         failed[kind] = true;
         errors.push(
@@ -291,9 +270,10 @@ export async function getMetaAssets(businessId: string): Promise<MetaAssetSummar
         );
         continue;
       }
+      // paths[0] = owned_*, paths[1] = client_* (shared with this Business Manager).
       for (const row of result.value.data) {
-        const asset = toAsset(row);
-        items.set(asset.id, asset);
+        const asset = { ...toAsset(row), relationship: index === 0 ? ("owned" as const) : ("client" as const) };
+        if (!items.has(asset.id) || asset.relationship === "owned") items.set(asset.id, asset);
       }
     }
     return [...items.values()];
@@ -318,34 +298,95 @@ export async function getMetaAssets(businessId: string): Promise<MetaAssetSummar
 
 export interface MetaConnectionState {
   connected: boolean;
-  businessId: string | null;
-  businessName: string | null;
 }
 
 export async function getMetaConnectionState(): Promise<MetaConnectionState> {
   const meta = await getIntegration("meta");
   const connected = meta.status === "connected" && getMetaOAuthConfig() !== null;
-  return {
-    connected,
-    businessId: connected ? (meta.config.business_id ?? null) : null,
-    businessName: connected ? (meta.config.business_name ?? null) : null,
-  };
+  return { connected };
 }
 
-// Validates a client asset selection against the live assets of the connected Business
-// Manager. Throws IntegrationError with an admin-safe message when anything is invalid.
-export async function resolveClientMetaAssets(
-  selection: MetaAssetSelection
-): Promise<{ businessId: string; businessName: string | null; assets: ResolvedMetaAssets }> {
-  const state = await getMetaConnectionState();
-  if (!state.connected) throw new IntegrationError("Meta is not connected.");
-  if (!state.businessId) throw new IntegrationError("Select the Hook Marketing Business Manager in Integrations first.");
+export interface MetaPoolSyncResult {
+  businesses: number;
+  adAccounts: number;
+  pages: number;
+  instagramAccounts: number;
+  errors: string[];
+}
 
-  const available = await getMetaAssets(state.businessId);
-  const result = resolveMetaAssetSelection(selection, available);
-  if (!result.ok) throw new IntegrationError(result.error);
+const POOL_TABLES: Record<MetaAssetKind, { table: string; idColumn: string; nameColumn: string }> = {
+  adAccounts: { table: "meta_ad_accounts", idColumn: "ad_account_id", nameColumn: "name" },
+  pages: { table: "meta_pages", idColumn: "page_id", nameColumn: "name" },
+  instagramAccounts: { table: "meta_instagram_accounts", idColumn: "instagram_account_id", nameColumn: "username" },
+};
 
-  return { businessId: state.businessId, businessName: state.businessName, assets: result.assets };
+// Refreshes the central Meta asset pool from the connected Meta account (source of truth).
+// Super-admin only (caller checks). Pool rows are never deleted: assets no longer visible are
+// marked inactive, so existing client assignments and history stay intact. An asset type
+// that failed to load (e.g. missing permission) is left untouched rather than deactivated.
+export async function syncMetaAssetPool(): Promise<MetaPoolSyncResult> {
+  const businesses = (await listMetaBusinesses()).filter((b) => /^\d+$/.test(b.id));
+  const db = createAdminClient();
+  const now = new Date().toISOString();
+  const result: MetaPoolSyncResult = { businesses: businesses.length, adAccounts: 0, pages: 0, instagramAccounts: 0, errors: [] };
+  const inList = (ids: string[]) => `(${ids.map((id) => `"${id}"`).join(",")})`;
+
+  if (businesses.length) {
+    const { error } = await db
+      .from("meta_business_managers")
+      .upsert(businesses.map((b) => ({ business_id: b.id, name: (b.name || b.id).slice(0, 300), is_active: true, synced_at: now })));
+    if (error) throw new IntegrationError("Could not save the Meta Business Managers.");
+  }
+  let stale = db.from("meta_business_managers").update({ is_active: false, synced_at: now });
+  stale = businesses.length ? stale.not("business_id", "in", inList(businesses.map((b) => b.id))) : stale.neq("business_id", "");
+  await stale;
+
+  // Sequential per Business Manager to stay well inside Meta rate limits.
+  for (const business of businesses) {
+    let assets: MetaAssetSummary;
+    try {
+      assets = await getMetaAssets(business.id);
+    } catch (error) {
+      result.errors.push(`${business.name}: ${error instanceof Error ? error.message : "could not load assets"}`);
+      continue;
+    }
+    result.errors.push(...assets.errors.map((e) => `${business.name} — ${e}`));
+
+    for (const kind of Object.keys(POOL_TABLES) as MetaAssetKind[]) {
+      if (assets.failed[kind]) continue;
+      const { table, idColumn, nameColumn } = POOL_TABLES[kind];
+      const valid = assets[kind].filter((a) => (kind === "adAccounts" ? /^act_\d+$/ : /^\d+$/).test(a.id));
+      if (valid.length) {
+        const { error } = await db.from(table).upsert(
+          valid.map((a) => ({
+            business_id: business.id,
+            [idColumn]: a.id,
+            [nameColumn]: (a.name || a.id).slice(0, 300),
+            relationship: a.relationship ?? "owned",
+            is_active: true,
+            synced_at: now,
+          })),
+          { onConflict: `business_id,${idColumn}` }
+        );
+        if (error) {
+          result.errors.push(`${business.name}: could not save ${META_ASSET_LABEL[kind]}s.`);
+          continue;
+        }
+      }
+      let inactive = db.from(table).update({ is_active: false, synced_at: now }).eq("business_id", business.id);
+      if (valid.length) inactive = inactive.not(idColumn, "in", inList(valid.map((a) => a.id)));
+      await inactive;
+      result[kind] += valid.length;
+    }
+  }
+
+  logEvent(result.errors.length ? "warn" : "info", {
+    provider: "meta",
+    operation: "sync_asset_pool",
+    status: result.errors.length ? "partial" : "succeeded",
+    error: result.errors.slice(0, 3).join(" | ") || undefined,
+  });
+  return result;
 }
 
 export async function disconnectMeta(actorId: string): Promise<void> {

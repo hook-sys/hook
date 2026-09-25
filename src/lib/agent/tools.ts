@@ -6,7 +6,7 @@ import { resolveRange, type MetricRow } from "@/lib/meta/insights";
 import { audienceHealth } from "@/lib/meta/audiences";
 import { listAudiences } from "@/lib/services/audiences";
 import { listCampaigns } from "@/lib/services/campaigns";
-import { getClientMetaAssets } from "@/lib/services/client-meta-assets";
+import { getClientMetaAssignments } from "@/lib/services/meta-assets";
 import { getClientById } from "@/lib/services/clients";
 import { listCreatives } from "@/lib/services/creatives";
 import { getClientAiKnowledge } from "@/lib/services/ai";
@@ -55,7 +55,7 @@ export function createToolExecutor(profile: AdminProfile, clientId: string) {
       case "get_client": {
         const [client, assets, meta, drive] = await Promise.all([
           getClientById(clientId),
-          getClientMetaAssets(clientId),
+          getClientMetaAssignments(clientId),
           getMetaConnectionState(),
           isGoogleDriveConnected(),
         ]);
@@ -65,8 +65,9 @@ export function createToolExecutor(profile: AdminProfile, clientId: string) {
           website: client.website,
           status: client.status,
           meta_connected: meta.connected,
-          meta_ad_account_assigned: Boolean(assets?.ad_account_id),
-          facebook_page_assigned: Boolean(assets?.facebook_page_id),
+          meta_business_managers_assigned: assets.businesses.map((b) => b.name),
+          meta_ad_accounts_assigned: assets.adAccounts.map((a) => a.name),
+          facebook_pages_assigned: assets.pages.map((p) => p.name),
           google_drive_connected: drive,
         };
       }

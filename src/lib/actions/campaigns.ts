@@ -16,7 +16,7 @@ import { getCreativesByIds } from "@/lib/services/creatives";
 import { getProduct } from "@/lib/services/products";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { createCampaignDraftCore, metaSnapshot } from "@/lib/workflows/campaigns";
+import { createCampaignDraftCore, resolveCampaignMeta } from "@/lib/workflows/campaigns";
 
 export interface CampaignActionState {
   status: "idle" | "error" | "success";
@@ -49,6 +49,11 @@ export async function createCampaignDraft(
     objective: get("objective") || null,
     notes: get("notes") || null,
     name: get("name") || null,
+    meta: {
+      adAccountId: get("meta_ad_account_id") || null,
+      pageId: get("meta_page_id") || null,
+      instagramAccountId: get("meta_instagram_account_id") || null,
+    },
   });
   if (!result.ok) return { status: "error", message: result.message };
   revalidatePath(campaignsPath(clientId));
@@ -168,23 +173,44 @@ export async function setCampaignStatus(
   return { status: "success", message: "Status updated." };
 }
 
-export async function refreshCampaignMetaAssets(clientId: string, campaignId: string): Promise<CampaignActionState> {
+// Chooses which of the client's ASSIGNED Meta assets this campaign uses (editable drafts only).
+export async function setCampaignMetaAssets(
+  clientId: string,
+  campaignId: string,
+  _prev: CampaignActionState,
+  formData: FormData
+): Promise<CampaignActionState> {
   await requirePermission("campaigns");
   const campaign = await getCampaign(clientId, campaignId);
   if (!campaign) return { status: "error", message: "Campaign not found." };
   if (!EDITABLE.includes(campaign.status)) return { status: "error", message: "Move the campaign back to Draft first." };
 
+  const get = (k: string) => String(formData.get(k) ?? "").trim() || null;
+  const requested = { adAccountId: get("meta_ad_account_id"), pageId: get("meta_page_id"), instagramAccountId: get("meta_instagram_account_id") };
+  const meta = await resolveCampaignMeta(clientId, requested);
+  if (
+    (requested.adAccountId && !meta.meta_ad_account_id) ||
+    (requested.pageId && !meta.meta_page_id) ||
+    (requested.instagramAccountId && !meta.meta_instagram_account_id)
+  ) {
+    return { status: "error", message: "Select only Meta assets assigned to this client." };
+  }
+
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("campaigns")
-    .update(await metaSnapshot(clientId))
+    .update({
+      meta_ad_account_id: requested.adAccountId ? meta.meta_ad_account_id : null,
+      meta_page_id: requested.pageId ? meta.meta_page_id : null,
+      meta_instagram_account_id: requested.instagramAccountId ? meta.meta_instagram_account_id : null,
+    })
     .eq("client_id", clientId)
     .eq("id", campaignId)
     .select("id");
-  if (error || !data?.length) return { status: "error", message: "Could not refresh Meta assets." };
+  if (error || !data?.length) return { status: "error", message: "Could not save the Meta assets." };
 
   revalidatePath(campaignsPath(clientId, campaignId));
-  return { status: "success", message: "Meta assets refreshed from the client's assignment." };
+  return { status: "success", message: "Meta assets saved." };
 }
 
 // Super admin only, behind META_PUBLISHING_ENABLED, approved campaigns only, with an explicit

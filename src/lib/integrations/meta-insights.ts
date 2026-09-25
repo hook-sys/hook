@@ -11,7 +11,7 @@ import {
   type RawInsightRow,
 } from "@/lib/meta/insights";
 import { logEvent } from "@/lib/observability";
-import { getClientMetaAssets } from "@/lib/services/client-meta-assets";
+import { getClientMetaAssignments } from "@/lib/services/meta-assets";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -98,13 +98,17 @@ export async function getClientInsights(
   actorId: string,
   clientId: string,
   range: InsightRange,
-  options: { refresh?: boolean } = {}
+  options: { refresh?: boolean; adAccountId?: string | null } = {}
 ): Promise<{ snapshot: InsightsSnapshot; adAccountId: string; cached: boolean }> {
-  const assets = await getClientMetaAssets(clientId);
-  if (!assets?.ad_account_id) throw new AnalyticsUnavailableError("Assign Meta assets first.");
+  // Only an ad account ASSIGNED to this client can be read (session read -> RLS applies).
+  const assigned = (await getClientMetaAssignments(clientId)).adAccounts;
+  if (assigned.length === 0) throw new AnalyticsUnavailableError("Assign Meta assets first.");
+  if (options.adAccountId && !assigned.some((a) => a.id === options.adAccountId)) {
+    throw new AnalyticsUnavailableError("That ad account is not assigned to this client.");
+  }
   const meta = await getMetaConnectionState();
   if (!meta.connected) throw new AnalyticsUnavailableError("Connect Meta.");
-  const adAccountId = assets.ad_account_id;
+  const adAccountId = options.adAccountId ?? assigned[0].id;
 
   const supabase = await createClient();
   const { data: cachedRow } = await supabase

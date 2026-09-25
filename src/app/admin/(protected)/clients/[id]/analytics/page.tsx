@@ -16,7 +16,7 @@ import { AnalyticsUnavailableError } from "@/lib/integrations/meta-insights";
 import { getMetaConnectionState } from "@/lib/integrations/meta";
 import { IntegrationError } from "@/lib/integrations/types";
 import { DATE_PRESETS, DATE_PRESET_LABELS, formatMetric, pctChange, resolveRange } from "@/lib/meta/insights";
-import { getClientMetaAssets } from "@/lib/services/client-meta-assets";
+import { getClientMetaAssignments } from "@/lib/services/meta-assets";
 import { getClientById } from "@/lib/services/clients";
 import { getReport, listReports } from "@/lib/services/reports";
 import { isUuid } from "@/lib/validation/ids";
@@ -43,26 +43,32 @@ export default async function AnalyticsPage({ params, searchParams }: PageProps<
   const fallback = resolveRange("last_7d");
   const range = resolved.ok ? resolved.range : fallback.ok ? fallback.range : null;
   const rangeError = resolved.ok ? null : resolved.error;
-  const rangeFields: Record<string, string> = range
-    ? range.preset
-      ? { preset: range.preset }
-      : { preset: "custom", since: range.since, until: range.until }
-    : { preset: "last_7d" };
-
-  const [meta, assets, readiness, reports] = await Promise.all([
+  const [meta, assignments, readiness, reports] = await Promise.all([
     getMetaConnectionState(),
-    getClientMetaAssets(client.id),
+    getClientMetaAssignments(client.id),
     getAiProviderReadiness(),
     listReports(client.id),
   ]);
+  // Only ad accounts assigned to this client; the requested one must be among them.
+  const requestedAccount = str(query.account);
+  const account =
+    assignments.adAccounts.find((a) => a.id === requestedAccount) ?? assignments.adAccounts[0] ?? null;
+  const rangeFields: Record<string, string> = {
+    ...(range
+      ? range.preset
+        ? { preset: range.preset }
+        : { preset: "custom", since: range.since, until: range.until }
+      : { preset: "last_7d" }),
+    ...(account ? { account: account.id } : {}),
+  };
   const reportId = str(query.report);
   const selectedReport = reportId && isUuid(reportId) ? await getReport(client.id, reportId) : null;
 
   let data: Awaited<ReturnType<typeof loadAnalytics>> | null = null;
   let loadError: string | null = null;
-  if (range && meta.connected && assets?.ad_account_id) {
+  if (range && meta.connected && account) {
     try {
-      data = await loadAnalytics(profile, client.id, range);
+      data = await loadAnalytics(profile, client.id, range, false, account.id);
     } catch (error) {
       loadError =
         error instanceof AnalyticsUnavailableError || error instanceof IntegrationError ? error.message : "Could not load Meta insights.";
@@ -80,14 +86,26 @@ export default async function AnalyticsPage({ params, searchParams }: PageProps<
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Analytics</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Live Meta Ads data from this client&apos;s assigned ad account{assets?.ad_account_id ? ` (${assets.ad_account_id})` : ""}. Read-only.
+          Live Meta Ads data from this client&apos;s assigned ad account{account ? ` (${account.name})` : ""}. Read-only.
         </p>
       </div>
 
-      <MetaReadinessNotice metaConnected={meta.connected} assets={assets} clientId={client.id} isSuperAdmin={isSuperAdmin} />
+      <MetaReadinessNotice metaConnected={meta.connected} assignments={assignments} clientId={client.id} isSuperAdmin={isSuperAdmin} />
 
       <Card>
         <form method="get" className="flex flex-col gap-3 p-5 sm:flex-row sm:items-end">
+          {assignments.adAccounts.length > 1 && (
+            <div className="sm:w-56">
+              <label htmlFor="account" className="mb-1.5 block text-sm font-medium text-slate-700">Ad Account</label>
+              <Select id="account" name="account" defaultValue={account?.id}>
+                {assignments.adAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
           <div className="sm:w-44">
             <label htmlFor="preset" className="mb-1.5 block text-sm font-medium text-slate-700">Time Range</label>
             <Select id="preset" name="preset" defaultValue={range?.preset ?? "custom"}>

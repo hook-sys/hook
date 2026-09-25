@@ -5,7 +5,7 @@ import { requireSuperAdmin } from "@/lib/auth/session";
 import { testClaudeApiKey } from "@/lib/integrations/claude";
 import { testFalApiKey } from "@/lib/integrations/fal";
 import { disconnectGoogleDrive } from "@/lib/integrations/google-drive";
-import { disconnectMeta, selectMetaBusiness } from "@/lib/integrations/meta";
+import { disconnectMeta, syncMetaAssetPool } from "@/lib/integrations/meta";
 import {
   clearIntegration,
   getIntegration,
@@ -126,19 +126,18 @@ export async function disconnectMetaAction(): Promise<IntegrationActionState> {
   return { status: "success", message: "Meta disconnected." };
 }
 
-export async function selectMetaBusinessAction(
-  _prev: IntegrationActionState,
-  formData: FormData
-): Promise<IntegrationActionState> {
-  const admin = await requireSuperAdmin();
-  const businessId = String(formData.get("business_id") ?? "");
-  if (!/^\d+$/.test(businessId)) return { status: "error", message: "Select a Business Manager." };
-
+// Refreshes the central Meta asset pool (Business Managers, ad accounts, Pages) from the
+// connected Meta account. Super admin only.
+export async function syncMetaAssetPoolAction(): Promise<IntegrationActionState> {
+  await requireSuperAdmin();
   try {
-    await selectMetaBusiness(businessId, admin.id);
+    const r = await syncMetaAssetPool();
+    revalidatePath(INTEGRATIONS_PATH);
+    const summary = `Synced ${r.businesses} Business Manager(s), ${r.adAccounts} ad account(s), ${r.pages} Page(s).`;
+    return r.errors.length
+      ? { status: "error", message: `${summary} Some assets could not be loaded: ${r.errors[0]}` }
+      : { status: "success", message: summary };
   } catch (error) {
-    return failure(error, "Could not select the Business Manager.");
+    return failure(error, "Could not sync Meta assets.");
   }
-  revalidatePath(INTEGRATIONS_PATH);
-  return { status: "success", message: "Business Manager selected." };
 }

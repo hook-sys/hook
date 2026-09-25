@@ -18,7 +18,8 @@ import {
 } from "@/lib/meta/audiences";
 import { logEvent } from "@/lib/observability";
 import { getAudience } from "@/lib/services/audiences";
-import { getClientMetaAssets } from "@/lib/services/client-meta-assets";
+import { pickAssigned } from "@/lib/meta/asset-assignment";
+import { getClientMetaAssignments } from "@/lib/services/meta-assets";
 import { getClientById } from "@/lib/services/clients";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -147,7 +148,12 @@ export async function setAudienceArchived(clientId: string, audienceId: string, 
 
 // Super admin only. Creates the audience in the client's own ad account. Requires the
 // ads_management scope, which is only requested when META_PUBLISHING_ENABLED is on.
-export async function createAudienceInMeta(clientId: string, audienceId: string): Promise<AudienceActionState> {
+export async function createAudienceInMeta(
+  clientId: string,
+  audienceId: string,
+  _prev: AudienceActionState,
+  formData: FormData
+): Promise<AudienceActionState> {
   const profile = await requireSuperAdmin();
   const audience = isUuid(audienceId) ? await getAudience(clientId, audienceId) : null;
   if (!audience) return { status: "error", message: "Audience not found." };
@@ -158,12 +164,19 @@ export async function createAudienceInMeta(clientId: string, audienceId: string)
   if (!meta.connected) return { status: "error", message: "Connect Meta." };
   if (!isMetaPublishingEnabled()) return { status: "error", message: NOT_AVAILABLE_MESSAGE };
 
-  const assets = await getClientMetaAssets(clientId);
-  const plan = planMetaAudience(audience, {
-    adAccountId: assets?.ad_account_id ?? null,
-    pageId: assets?.facebook_page_id ?? null,
-    instagramId: assets?.instagram_account_id ?? null,
-  });
+  // Only assets assigned to this client can be used (requested one if assigned, or the only one).
+  const assigned = await getClientMetaAssignments(clientId);
+  const get = (k: string) => String(formData.get(k) ?? "").trim() || null;
+  const refs = {
+    adAccountId: pickAssigned(assigned.adAccounts, get("ad_account_id")),
+    pageId: pickAssigned(assigned.pages, get("page_id")),
+    instagramId: pickAssigned(assigned.instagramAccounts, get("instagram_account_id")),
+  };
+  if ((get("ad_account_id") && !refs.adAccountId) || (get("page_id") && !refs.pageId) || (get("instagram_account_id") && !refs.instagramId)) {
+    return { status: "error", message: "Select only Meta assets assigned to this client." };
+  }
+  if (!refs.adAccountId && assigned.adAccounts.length > 1) return { status: "error", message: "Select the ad account." };
+  const plan = planMetaAudience(audience, refs);
   if (!plan.ok) return { status: "error", message: plan.error };
 
   const admin = createAdminClient();

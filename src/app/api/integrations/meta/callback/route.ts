@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireSuperAdmin } from "@/lib/auth/session";
-import { connectMeta } from "@/lib/integrations/meta";
+import { connectMeta, syncMetaAssetPool } from "@/lib/integrations/meta";
 import { completeOAuth, redirectToIntegrations } from "@/lib/integrations/oauth";
 
 export async function GET(request: NextRequest) {
@@ -20,6 +20,8 @@ export async function GET(request: NextRequest) {
     console.error("Meta connection failed:", error instanceof Error ? error.message : "unknown error");
     return redirectToIntegrations(request, { error: "meta_failed" });
   }
+  // Fill the central asset pool right away; the admin can re-run "Sync Meta Assets" anytime.
+  await syncMetaAssetPool().catch(() => undefined);
 
   return redirectToIntegrations(request, { connected: "meta" });
 }
