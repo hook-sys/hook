@@ -22,13 +22,30 @@ const GRAPH_VERSION = "v26.0";
 const GRAPH_API = `https://graph.facebook.com/${GRAPH_VERSION}`;
 const DIALOG_URL = `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`;
 
-// Read-level access to the Business Manager and its assets. Ad management scopes are only
-// requested when publishing is explicitly enabled on the server (reconnect Meta after enabling).
-const READ_SCOPES = ["business_management", "ads_read", "pages_show_list", "instagram_basic"];
+// Read-level access to the Business Manager and its assets. Optional scope groups are only
+// requested when explicitly enabled on the server (reconnect Meta after enabling), because
+// Meta rejects the whole login ("Invalid Scopes") if any requested permission isn't
+// configured for the app:
+// - Instagram: needs the Instagram permission/use case added in the Meta app dashboard.
+// - Publishing: needs Marketing API ad-management access.
+const READ_SCOPES = ["business_management", "ads_read", "pages_show_list"];
+const INSTAGRAM_SCOPES = ["instagram_basic"];
 const PUBLISH_SCOPES = ["ads_management", "pages_manage_ads", "pages_read_engagement"];
 
 export function isMetaPublishingEnabled(): boolean {
   return process.env.META_PUBLISHING_ENABLED === "true";
+}
+
+export function isMetaInstagramEnabled(): boolean {
+  return process.env.META_INSTAGRAM_ENABLED === "true";
+}
+
+export function metaOAuthScopes(): string[] {
+  return [
+    ...READ_SCOPES,
+    ...(isMetaInstagramEnabled() ? INSTAGRAM_SCOPES : []),
+    ...(isMetaPublishingEnabled() ? PUBLISH_SCOPES : []),
+  ];
 }
 
 interface MetaTokenSet {
@@ -54,7 +71,7 @@ export function buildMetaAuthUrl(config: OAuthAppConfig, state: string): string 
     client_id: config.clientId,
     redirect_uri: config.redirectUri,
     response_type: "code",
-    scope: [...READ_SCOPES, ...(isMetaPublishingEnabled() ? PUBLISH_SCOPES : [])].join(","),
+    scope: metaOAuthScopes().join(","),
     state,
   }).toString();
   return url.toString();

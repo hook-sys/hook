@@ -86,3 +86,23 @@ test("Drive: deleted/trashed file detected; reads retried on 5xx", async () => {
   assert.equal((await getDriveFile("1AbCdEfGhIjKlMnOp")).name, "renamed.jpg");
   assert.equal(calls.length, 2);
 });
+
+test("Meta OAuth scopes: instagram_basic and publish scopes only when explicitly enabled", async () => {
+  const { metaOAuthScopes, buildMetaAuthUrl } = await import("@/lib/integrations/meta");
+  const saved = { ig: process.env.META_INSTAGRAM_ENABLED, pub: process.env.META_PUBLISHING_ENABLED };
+  try {
+    delete process.env.META_INSTAGRAM_ENABLED;
+    delete process.env.META_PUBLISHING_ENABLED;
+    assert.deepEqual(metaOAuthScopes(), ["business_management", "ads_read", "pages_show_list"]);
+    const url = new URL(buildMetaAuthUrl({ clientId: "1", clientSecret: "s", redirectUri: "https://x.test/cb" }, "st"));
+    assert.equal(url.searchParams.get("scope"), "business_management,ads_read,pages_show_list");
+    process.env.META_INSTAGRAM_ENABLED = "true";
+    assert.ok(metaOAuthScopes().includes("instagram_basic"));
+    assert.ok(!metaOAuthScopes().includes("ads_management"));
+    process.env.META_PUBLISHING_ENABLED = "true";
+    assert.ok(metaOAuthScopes().includes("ads_management"));
+  } finally {
+    if (saved.ig === undefined) delete process.env.META_INSTAGRAM_ENABLED; else process.env.META_INSTAGRAM_ENABLED = saved.ig;
+    if (saved.pub === undefined) delete process.env.META_PUBLISHING_ENABLED; else process.env.META_PUBLISHING_ENABLED = saved.pub;
+  }
+});
