@@ -7,6 +7,21 @@ import {
   type PublishInput,
 } from "@/lib/meta/ads-payloads";
 import { isMetaPublishingEnabled, metaGraphDelete, metaGraphPost } from "@/lib/integrations/meta";
+import { downloadDriveFile } from "@/lib/integrations/google-drive";
+
+// Meta's ad image size limit.
+const META_IMAGE_MAX_BYTES = 30 * 1024 * 1024;
+
+// Drive image -> ad account image library (server-side download; tokens never leave the server).
+async function uploadDriveImageToMeta(account: string, driveFileId: string): Promise<string> {
+  const { bytes } = await downloadDriveFile(driveFileId, META_IMAGE_MAX_BYTES);
+  const res = await metaGraphPost<{ images?: Record<string, { hash?: string }> }>(`/${account}/adimages`, {
+    bytes: Buffer.from(bytes).toString("base64"),
+  });
+  const hash = Object.values(res.images ?? {})[0]?.hash;
+  if (!hash) throw new IntegrationError("Meta did not return an image hash for the Drive image.");
+  return hash;
+}
 import { IntegrationError } from "@/lib/integrations/types";
 
 export interface PublishedIds {
@@ -34,9 +49,13 @@ export async function publishCampaignToMeta(input: PublishInput): Promise<Publis
 
     const adIds: string[] = [];
     for (const [index, creative] of images.entries()) {
+      const image =
+        creative.source === "drive" && creative.drive_file_id
+          ? { image_hash: await uploadDriveImageToMeta(account, creative.drive_file_id) }
+          : { asset_url: creative.asset_url! };
       const adCreative = await metaGraphPost<{ id: string }>(
         `/${account}/adcreatives`,
-        buildImageAdCreativePayload(campaign, { id: creative.id, asset_url: creative.asset_url! }, input.productUrl!)
+        buildImageAdCreativePayload(campaign, { id: creative.id, ...image }, input.productUrl!)
       );
       const ad = await metaGraphPost<{ id: string }>(
         `/${account}/ads`,

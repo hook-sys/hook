@@ -9,7 +9,8 @@ export async function setIntegrationSecret(provider, secret) {
 }
 export async function getIntegration(provider) {
   const status = globalThis.__fakeStatuses?.[provider] ?? "connected";
-  return { provider, status, config: {}, connected_at: null, updated_at: null };
+  const config = globalThis.__fakeConfigs?.[provider] ?? {};
+  return { provider, status, config, connected_at: null, updated_at: null };
 }
 export async function saveIntegration(provider, values) {
   saved.push([provider, values.status]);

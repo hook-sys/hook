@@ -22,6 +22,8 @@ export interface FalModelSpec {
   label: string;
   // "reference" = output aspect ratio follows the reference image.
   formats: readonly CreativeFormat[] | "reference";
+  // Reference input the endpoint accepts (from its fal.ai schema): "image" (image_url) or none.
+  referenceInput: "image" | null;
   durations: readonly number[] | null;
   supportsNegativePrompt: boolean;
   maxPromptLength: number;
@@ -51,6 +53,7 @@ export const FAL_MODELS: Record<string, FalModelSpec> = {
   "fal-ai/flux/dev": {
     id: "fal-ai/flux/dev",
     mode: "text-to-image",
+    referenceInput: null,
     label: "FLUX.1 [dev]",
     formats: ALL_FORMATS,
     durations: null,
@@ -68,6 +71,7 @@ export const FAL_MODELS: Record<string, FalModelSpec> = {
   "fal-ai/flux-pro/kontext": {
     id: "fal-ai/flux-pro/kontext",
     mode: "image-to-image",
+    referenceInput: "image",
     label: "FLUX.1 Kontext [pro]",
     formats: ALL_FORMATS,
     durations: null,
@@ -85,6 +89,7 @@ export const FAL_MODELS: Record<string, FalModelSpec> = {
   "fal-ai/kling-video/v2.5-turbo/pro/text-to-video": {
     id: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
     mode: "text-to-video",
+    referenceInput: null,
     label: "Kling 2.5 Turbo Pro (text-to-video)",
     formats: ALL_FORMATS,
     durations: [5, 10],
@@ -101,6 +106,7 @@ export const FAL_MODELS: Record<string, FalModelSpec> = {
   "fal-ai/kling-video/v2.5-turbo/pro/image-to-video": {
     id: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
     mode: "image-to-video",
+    referenceInput: "image",
     label: "Kling 2.5 Turbo Pro (image-to-video)",
     formats: "reference",
     durations: [5, 10],
@@ -117,6 +123,7 @@ export const FAL_MODELS: Record<string, FalModelSpec> = {
   "fal-ai/flux-pro/v1.1": {
     id: "fal-ai/flux-pro/v1.1",
     mode: "text-to-image",
+    referenceInput: null,
     label: "FLUX1.1 [pro]",
     formats: ALL_FORMATS,
     durations: null,
@@ -133,6 +140,7 @@ export const FAL_MODELS: Record<string, FalModelSpec> = {
   "fal-ai/flux-pro/v1.1-ultra": {
     id: "fal-ai/flux-pro/v1.1-ultra",
     mode: "text-to-image",
+    referenceInput: null,
     label: "FLUX1.1 [pro] ultra",
     formats: ALL_FORMATS,
     durations: null,
@@ -149,6 +157,7 @@ export const FAL_MODELS: Record<string, FalModelSpec> = {
   "fal-ai/flux-pro/kontext/max": {
     id: "fal-ai/flux-pro/kontext/max",
     mode: "image-to-image",
+    referenceInput: "image",
     label: "FLUX.1 Kontext [max]",
     formats: ALL_FORMATS,
     durations: null,
@@ -166,6 +175,7 @@ export const FAL_MODELS: Record<string, FalModelSpec> = {
   "fal-ai/kling-video/v2.1/master/text-to-video": {
     id: "fal-ai/kling-video/v2.1/master/text-to-video",
     mode: "text-to-video",
+    referenceInput: null,
     label: "Kling 2.1 Master (text-to-video)",
     formats: ALL_FORMATS,
     durations: [5, 10],
@@ -182,6 +192,7 @@ export const FAL_MODELS: Record<string, FalModelSpec> = {
   "fal-ai/kling-video/v2.1/master/image-to-video": {
     id: "fal-ai/kling-video/v2.1/master/image-to-video",
     mode: "image-to-video",
+    referenceInput: "image",
     label: "Kling 2.1 Master (image-to-video)",
     formats: "reference",
     durations: [5, 10],
@@ -269,10 +280,29 @@ export type FalJobPlan =
   | { ok: true; modelId: string; mode: FalMode; input: Record<string, unknown> }
   | { ok: false; error: string };
 
+// Reference images reach fal.ai as a public https URL or, for private Drive files, as an
+// image data URI built server-side from the Drive download.
+const REFERENCE_URL = /^(https:\/\/\S+|data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+)$/;
+
+// Compatibility of a selected reference asset with the model that would run, checked before
+// any paid call. Null = compatible.
+export function checkReferenceCompatibility(
+  media: CreativeMedia,
+  referenceKind: "image" | "video" | null,
+  selection: FalModelSelection = DEFAULT_FAL_MODELS
+): string | null {
+  if (!referenceKind) return null;
+  const spec = falModelFor(media, true, selection);
+  if (spec.referenceInput !== referenceKind) {
+    return `${spec.label} accepts an ${spec.referenceInput ?? "text-only"} reference, not a ${referenceKind}. Select a Drive image instead.`;
+  }
+  return null;
+}
+
 export function planFalJob(req: FalJobRequest, selection: FalModelSelection = DEFAULT_FAL_MODELS): FalJobPlan {
   const hasReference = req.referenceImageUrl !== null;
-  if (hasReference && !/^https:\/\/\S+$/.test(req.referenceImageUrl!)) {
-    return { ok: false, error: "The reference image must be an https URL." };
+  if (hasReference && !REFERENCE_URL.test(req.referenceImageUrl!)) {
+    return { ok: false, error: "The reference image must be an https URL or an image data URI." };
   }
   const capabilityError = checkFalCapabilities(req.media, req.format, req.durationSeconds, hasReference, selection);
   if (capabilityError) return { ok: false, error: capabilityError };

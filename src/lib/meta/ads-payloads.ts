@@ -22,7 +22,8 @@ export interface PublishInput {
     strategy: Partial<CampaignStrategy>;
   };
   productUrl: string | null;
-  creatives: { id: string; media: string; status: string; asset_url: string | null }[];
+  // source "drive" = an existing Google Drive image (uploaded to Meta by the server at publish time).
+  creatives: { id: string; media: string; status: string; asset_url: string | null; source?: string; drive_file_id?: string | null }[];
   metaConnected: boolean;
   publishingEnabled: boolean;
 }
@@ -88,9 +89,11 @@ export function buildAdSetPayload(campaign: PublishInput["campaign"], metaCampai
   };
 }
 
+// Image by public URL (generated creatives) or by Meta image hash (Drive images uploaded to
+// the ad account's image library, since Meta can't fetch private Drive files).
 export function buildImageAdCreativePayload(
   campaign: PublishInput["campaign"],
-  creative: { id: string; asset_url: string },
+  creative: { id: string; asset_url?: string; image_hash?: string },
   productUrl: string
 ) {
   const s = campaign.strategy;
@@ -100,7 +103,7 @@ export function buildImageAdCreativePayload(
       page_id: campaign.meta_page_id,
       ...(campaign.meta_instagram_account_id ? { instagram_user_id: campaign.meta_instagram_account_id } : {}),
       link_data: {
-        picture: creative.asset_url,
+        ...(creative.image_hash ? { image_hash: creative.image_hash } : { picture: creative.asset_url }),
         link: productUrl,
         message: s.primary_text,
         name: s.headline,

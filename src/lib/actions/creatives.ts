@@ -30,7 +30,17 @@ function studioPath(clientId: string) {
 
 const formInput = (formData: FormData) =>
   Object.fromEntries(
-    ["product_id", "media", "creative_type", "hatog_stage", "format", "duration_seconds", "reference_asset_id"].map((k) => [
+    [
+      "product_id",
+      "media",
+      "creative_type",
+      "hatog_stage",
+      "format",
+      "duration_seconds",
+      "reference_asset_id",
+      "reference_drive_source_id",
+      "reference_drive_file_id",
+    ].map((k) => [
       k,
       String(formData.get(k) ?? ""),
     ])

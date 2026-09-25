@@ -13,6 +13,7 @@ const suites = [
   ["meta-assets.test.mjs", ""],
   ["ai-brain.test.mjs", "claude,store,admin,server,session,nextcache"],
   ["final-stack.test.mjs", "claude,store,admin,server,session,nextcache"],
+  ["drive-sources.test.mjs", "claude,store,admin,server,session,nextcache,meta"],
 ];
 let failed = 0;
 for (const [file, fakes] of suites) {

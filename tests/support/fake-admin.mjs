@@ -22,6 +22,10 @@ class Query {
     this.filters.push((r) => r[col] === val);
     return this;
   }
+  neq(col, val) {
+    this.filters.push((r) => r[col] !== val);
+    return this;
+  }
   gte(col, val) {
     this.filters.push((r) => r[col] >= val);
     return this;
@@ -97,8 +101,9 @@ class Query {
       return { data: this.returning ? updated : null, error: null };
     }
     if (this.op === "delete") {
+      const removed = rows.filter(match);
       db()[this.table] = rows.filter((r) => !match(r));
-      return { data: null, error: null };
+      return { data: this.returning ? removed : null, error: null };
     }
     const found = rows.filter(match);
     if (this.countOnly) return { data: null, count: found.length, error: null };

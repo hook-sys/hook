@@ -27,6 +27,8 @@ export interface IntegrationConfig {
   business_id?: string;
   business_name?: string;
   expires_at?: string;
+  // OAuth scopes Google actually granted (space-separated), e.g. to detect drive.readonly.
+  granted_scopes?: string;
 }
 
 export interface IntegrationRecord {

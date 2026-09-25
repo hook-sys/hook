@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import type { CreativeActionState } from "@/lib/actions/creatives";
-import { falModelFor, type FalModelSelection } from "@/lib/creative/fal-models";
+import { checkReferenceCompatibility, falModelFor, type FalModelSelection } from "@/lib/creative/fal-models";
 import {
   CREATIVE_FORMATS,
   CREATIVE_TYPES_BY_MEDIA,
@@ -11,6 +11,8 @@ import {
   type CreativeFormat,
   type CreativeMedia,
 } from "@/lib/creative/options";
+import type { DriveAssetSummary } from "@/lib/drive/media-types";
+import { DriveAssetPicker, type PickerSource } from "@/components/admin/drive/DriveAssetPicker";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -23,22 +25,28 @@ const initialState: CreativeActionState = { status: "idle" };
 export interface GeneratorProduct {
   id: string;
   name: string;
-  images: { id: string; label: string }[];
 }
 
 export function CreativeGeneratorForm({
+  clientId,
   products,
+  driveSources,
   generateAction,
   previewAction,
   canGenerate,
   falModels,
+  brain,
 }: {
+  clientId: string;
   products: GeneratorProduct[];
+  driveSources: PickerSource[];
   generateAction: Action;
   previewAction?: Action;
   canGenerate: boolean;
-  // The Fal.ai model selected by the Super Admin for each mode.
+  // The Fal.ai model saved by the Super Admin for each mode (Settings → Integrations).
   falModels: FalModelSelection;
+  // The selected AI Brain (Settings → AI Brain); null when nothing is selected.
+  brain: { providerLabel: string; model: string } | null;
 }) {
   const [state, formAction, pending] = useActionState(generateAction, initialState);
   const [previewState, previewFormAction, previewPending] = useActionState(
@@ -53,10 +61,11 @@ export function CreativeGeneratorForm({
   const [hatogStage, setHatogStage] = useState<string>("hook");
   const [format, setFormat] = useState<CreativeFormat>("9:16");
   const [duration, setDuration] = useState("5");
-  const [referenceId, setReferenceId] = useState("");
+  const [reference, setReference] = useState<DriveAssetSummary | null>(null);
 
-  const images = products.find((p) => p.id === productId)?.images ?? [];
-  const model = falModelFor(media, referenceId !== "", falModels);
+  // The model that will actually run for this media + reference combination.
+  const model = falModelFor(media, reference !== null, falModels);
+  const compatibilityError = checkReferenceCompatibility(media, reference?.kind ?? null, falModels);
   const busy = pending || previewPending;
 
   const changeMedia = (next: CreativeMedia) => {
@@ -73,15 +82,7 @@ export function CreativeGeneratorForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <Label htmlFor="product_id">Product</Label>
-          <Select
-            id="product_id"
-            name="product_id"
-            value={productId}
-            onChange={(e) => {
-              setProductId(e.target.value);
-              setReferenceId("");
-            }}
-          >
+          <Select id="product_id" name="product_id" value={productId} onChange={(e) => setProductId(e.target.value)}>
             {products.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -145,26 +146,42 @@ export function CreativeGeneratorForm({
           </div>
         )}
         <div className="sm:col-span-2">
-          <Label htmlFor="reference_asset_id">Reference Product Image</Label>
-          <Select id="reference_asset_id" name="reference_asset_id" value={referenceId} onChange={(e) => setReferenceId(e.target.value)}>
-            <option value="">None (text-to-{media})</option>
-            {images.map((img) => (
-              <option key={img.id} value={img.id}>
-                {img.label}
-              </option>
-            ))}
-          </Select>
+          <Label>Reference Product Asset (optional)</Label>
+          <DriveAssetPicker
+            clientId={clientId}
+            sources={driveSources}
+            namePrefix="reference_drive"
+            value={reference}
+            onChange={setReference}
+          />
           <p className="mt-1 text-xs text-slate-400">
-            {images.length === 0
-              ? "This product has no Drive reference images (JPEG, PNG or WebP). Add one to keep the real product in the output."
-              : "Recommended: keeps the real product in the output. Drive files must be shared “Anyone with the link”."}{" "}
-            Fal.ai model: {model.label}
+            A Drive image keeps the real product in the output ({media === "image" ? "image-reference" : "image-to-video"} model).
+            Drive videos can&apos;t be used as a reference by the selected Fal.ai models.
           </p>
+          {compatibilityError && <p className="mt-1 text-sm text-red-600">{compatibilityError}</p>}
         </div>
       </div>
 
+      <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm" aria-live="polite">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">This request will use</p>
+        <p className="mt-1 text-slate-700">
+          AI Brain:{" "}
+          {brain ? (
+            <span className="font-medium text-slate-900">
+              {brain.providerLabel} → {brain.model}
+            </span>
+          ) : (
+            <span className="text-amber-700">not selected (Settings → AI Brain)</span>
+          )}
+        </p>
+        <p className="text-slate-700">
+          {reference ? (media === "image" ? "Image + Reference" : "Video + Reference") : media === "image" ? "Image Generation" : "Video Generation"}:{" "}
+          <span className="font-medium text-slate-900">Fal.ai → {model.label}</span> <span className="text-xs text-slate-400">({model.id})</span>
+        </p>
+      </div>
+
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" disabled={busy || !canGenerate}>
+        <Button type="submit" disabled={busy || !canGenerate || compatibilityError !== null}>
           {pending ? "Generating brief…" : "Generate Creative"}
         </Button>
         {previewAction && (

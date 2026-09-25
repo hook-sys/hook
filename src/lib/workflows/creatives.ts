@@ -9,10 +9,13 @@ import {
 import { aiErrorMessage, generateAndLog } from "@/lib/ai/generate";
 import { brainReadiness } from "@/lib/ai/brain";
 import { enforceAiRateLimit, getAiProviderReadiness, logGeneration } from "@/lib/ai/usage";
-import { checkFalCapabilities, falBillingUnits, falModelFor, planFalJob } from "@/lib/creative/fal-models";
+import { checkFalCapabilities, checkReferenceCompatibility, falBillingUnits, falModelFor, planFalJob, type FalModelSelection } from "@/lib/creative/fal-models";
 import { getFalModelSelection } from "@/lib/creative/fal-selection";
 import { drivePublicDownloadUrl, isFalReferenceMime, probePublicDriveMedia } from "@/lib/integrations/drive-media";
 import { IntegrationError } from "@/lib/integrations/types";
+import { isDriveId } from "@/lib/drive/media-types";
+import { DriveSourceError, resolveClientDriveAsset } from "@/lib/drive/sources";
+import { downloadDriveFile } from "@/lib/integrations/google-drive";
 import {
   CREATIVE_FORMATS,
   CREATIVE_MEDIA,
@@ -33,7 +36,12 @@ import { HATOG_STAGE_KEYS, type HatogStageKey } from "@/types/ai";
 // Server-only creative workflows shared by the Creative Studio and the AI agent. Callers
 // must have checked the `content` permission.
 
-export type CreativeRequest = CreativeBriefRequest & { productId: string; referenceAssetId: string | null };
+export type CreativeRequest = CreativeBriefRequest & {
+  productId: string;
+  referenceAssetId: string | null;
+  // A file from one of the client's configured Google Drive sources.
+  referenceDrive: { sourceId: string; fileId: string } | null;
+};
 
 export function parseCreativeRequest(input: Record<string, unknown>): CreativeRequest | { error: string } {
   const get = (k: string) => (typeof input[k] === "string" ? (input[k] as string).trim() : input[k] == null ? "" : String(input[k]));
@@ -44,6 +52,8 @@ export function parseCreativeRequest(input: Record<string, unknown>): CreativeRe
   const format = get("format");
   const duration = get("duration_seconds");
   const referenceAssetId = get("reference_asset_id") || null;
+  const driveSourceId = get("reference_drive_source_id");
+  const driveFileId = get("reference_drive_file_id");
 
   if (!isUuid(productId)) return { error: "Select a product." };
   if (!(CREATIVE_MEDIA as readonly string[]).includes(media)) return { error: "Select image or video." };
@@ -51,6 +61,9 @@ export function parseCreativeRequest(input: Record<string, unknown>): CreativeRe
   if (!(HATOG_STAGE_KEYS as readonly string[]).includes(hatogStage)) return { error: "Select a HATOG stage." };
   if (!(CREATIVE_FORMATS as readonly string[]).includes(format)) return { error: "Select a format." };
   if (referenceAssetId && !isUuid(referenceAssetId)) return { error: "Invalid reference image." };
+  if ((driveSourceId || driveFileId) && (!isUuid(driveSourceId) || !isDriveId(driveFileId))) return { error: "Invalid Google Drive reference." };
+  const referenceDrive = driveSourceId ? { sourceId: driveSourceId, fileId: driveFileId } : null;
+  if (referenceDrive && referenceAssetId) return { error: "Select one reference asset." };
 
   let durationSeconds: number | null = null;
   if (media === "video") {
@@ -65,16 +78,53 @@ export function parseCreativeRequest(input: Record<string, unknown>): CreativeRe
     hatogStage: hatogStage as HatogStageKey,
     format: format as CreativeFormat,
     durationSeconds,
-    hasReferenceImage: referenceAssetId !== null,
+    hasReferenceImage: referenceAssetId !== null || referenceDrive !== null,
     referenceAssetId,
+    referenceDrive,
   };
 }
 
-// Reference images come only from Google Drive. Before anything is paid for, the file is
-// re-checked through Google's public download link — the same URL fal.ai fetches — so it
-// must still exist, be shared "Anyone with the link", and be a format fal.ai accepts.
-async function resolveReferenceImage(clientId: string, productId: string, assetId: string | null) {
-  if (!assetId) return { url: null };
+const MAX_REFERENCE_BYTES = 10 * 1024 * 1024;
+
+type ReferenceResult = { url: string | null; storedUrl: string | null } | { error: string };
+
+// A reference from the client's configured Drive sources. Checked before anything is paid
+// for: the file must be in that client's source, be an image the selected Fal.ai model accepts,
+// and be at most 10 MB. Publicly shared files reach fal.ai by URL; private ones are downloaded
+// server-side and sent as an image data URI (the Drive token never leaves the server).
+async function resolveDriveReference(
+  clientId: string,
+  request: CreativeRequest,
+  falModels: FalModelSelection
+): Promise<ReferenceResult> {
+  const ref = request.referenceDrive!;
+  let asset;
+  try {
+    asset = await resolveClientDriveAsset(clientId, ref.sourceId, ref.fileId);
+  } catch (error) {
+    return { error: error instanceof DriveSourceError ? error.message : "Could not read the Google Drive asset." };
+  }
+  const incompatible = checkReferenceCompatibility(request.media, asset.kind, falModels);
+  if (incompatible) return { error: incompatible };
+  if (!isFalReferenceMime(asset.file.mimeType)) return { error: "Fal.ai reference images must be JPG, PNG or WEBP." };
+  if (asset.file.size !== null && asset.file.size > MAX_REFERENCE_BYTES) return { error: "The reference image is larger than 10 MB." };
+
+  const storedUrl = `https://drive.google.com/file/d/${ref.fileId}/view`;
+  const publicType = await probePublicDriveMedia(ref.fileId).catch(() => null);
+  if (isFalReferenceMime(publicType)) return { url: drivePublicDownloadUrl(ref.fileId), storedUrl };
+  try {
+    const { bytes, mimeType } = await downloadDriveFile(ref.fileId, MAX_REFERENCE_BYTES);
+    const type = isFalReferenceMime(mimeType) ? mimeType : asset.file.mimeType;
+    return { url: `data:${type};base64,${Buffer.from(bytes).toString("base64")}`, storedUrl };
+  } catch (error) {
+    return { error: error instanceof IntegrationError ? error.message : "Could not download the Google Drive reference image." };
+  }
+}
+
+// Legacy product-asset reference (used by the AI agent): re-checked through Google's public
+// download link — the same URL fal.ai fetches — before anything is paid for.
+async function resolveReferenceImage(clientId: string, productId: string, assetId: string | null): Promise<ReferenceResult> {
+  if (!assetId) return { url: null, storedUrl: null };
   const asset = (await listProductAssets(clientId, productId)).find((a) => a.id === assetId);
   if (!asset || asset.asset_type !== "image" || !asset.drive_file_id) {
     return { error: "The reference image must be one of this product's Google Drive images." };
@@ -89,7 +139,8 @@ async function resolveReferenceImage(clientId: string, productId: string, assetI
   if (!isFalReferenceMime(served)) {
     return { error: "Fal.ai can't read this Drive image. Share it as “Anyone with the link” (Viewer) and try again." };
   }
-  return { url: drivePublicDownloadUrl(asset.drive_file_id) };
+  const url = drivePublicDownloadUrl(asset.drive_file_id);
+  return { url, storedUrl: url };
 }
 
 // Context + prompt are built before any paid call; builder errors (e.g. a disabled HATOG
@@ -155,11 +206,13 @@ export async function startCreativeGeneration(
   const product = await getProduct(client.id, request.productId);
   if (!product) return { ok: false, message: "Product not found for this client." };
 
-  const reference = await resolveReferenceImage(client.id, product.id, request.referenceAssetId);
-  if ("error" in reference) return { ok: false, message: reference.error! };
-
   // Everything checkable for free is checked before paying for an AI brain call.
   const falModels = await getFalModelSelection();
+  const reference = request.referenceDrive
+    ? await resolveDriveReference(client.id, request, falModels)
+    : await resolveReferenceImage(client.id, product.id, request.referenceAssetId);
+  if ("error" in reference) return { ok: false, message: reference.error };
+
   const capabilityError = checkFalCapabilities(request.media, request.format, request.durationSeconds, reference.url !== null, falModels);
   if (capabilityError) return { ok: false, message: capabilityError };
 
@@ -199,7 +252,7 @@ export async function startCreativeGeneration(
     brief,
     prompt: brief.generation_prompt,
     negative_prompt: brief.negative_prompt,
-    reference_image_url: reference.url,
+    reference_image_url: reference.storedUrl,
     provider: "fal",
     provider_model: plan.ok ? plan.modelId : falModelFor(request.media, reference.url !== null, falModels).id,
     created_by: profile.id,

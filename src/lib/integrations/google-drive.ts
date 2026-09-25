@@ -24,8 +24,11 @@ const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 
-// drive.file: the app can only see/manage files and folders it created itself.
-const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/drive.file"];
+// drive.file: create/manage the files and folders the app creates (client folders, saved
+// creatives). drive.readonly: read-only access so the server can list and download the
+// image/video files in each client's configured Drive sources. Tokens never leave the server.
+export const DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/drive.file", DRIVE_READONLY_SCOPE];
 
 interface GoogleTokenSet {
   access_token: string;
@@ -37,6 +40,7 @@ interface GoogleTokenResponse {
   access_token?: string;
   refresh_token?: string;
   expires_in?: number;
+  scope?: string;
   error?: string;
 }
 
@@ -104,7 +108,11 @@ export async function connectGoogleDrive(code: string, codeVerifier: string, act
     "google_drive",
     {
       status: "connected",
-      config: { account_email: (userinfo as { email?: string }).email ?? undefined, last_error: null },
+      config: {
+        account_email: (userinfo as { email?: string }).email ?? undefined,
+        granted_scopes: typeof token.scope === "string" ? token.scope.slice(0, 1000) : undefined,
+        last_error: null,
+      },
       connected_at: new Date().toISOString(),
     },
     actorId
@@ -321,6 +329,113 @@ export async function uploadFileToDrive(options: {
     throw new IntegrationError(`Google Drive upload failed (${put.status}).`);
   }
   return file;
+}
+
+// ---------------------------------------------------------------------------
+// Read access for client Drive sources (requires the drive.readonly grant)
+// ---------------------------------------------------------------------------
+
+export async function hasDriveReadAccess(): Promise<boolean> {
+  const integration = await getIntegration("google_drive");
+  return integration.status === "connected" && (integration.config.granted_scopes ?? "").split(" ").includes(DRIVE_READONLY_SCOPE);
+}
+
+export interface DriveItemMeta {
+  id: string;
+  name: string;
+  mimeType: string;
+  trashed: boolean;
+  parents: string[];
+  size: number | null;
+  thumbnailLink: string | null;
+  webViewLink: string | null;
+}
+
+const ITEM_FIELDS = "id,name,mimeType,trashed,parents,size,thumbnailLink,webViewLink";
+const ALL_DRIVES = "supportsAllDrives=true";
+
+function toItem(raw: Record<string, unknown>): DriveItemMeta {
+  return {
+    id: String(raw.id),
+    name: String(raw.name ?? ""),
+    mimeType: String(raw.mimeType ?? ""),
+    trashed: raw.trashed === true,
+    parents: Array.isArray(raw.parents) ? raw.parents.map(String) : [],
+    size: raw.size != null && Number.isFinite(Number(raw.size)) ? Number(raw.size) : null,
+    thumbnailLink: typeof raw.thumbnailLink === "string" ? raw.thumbnailLink : null,
+    webViewLink: typeof raw.webViewLink === "string" ? raw.webViewLink : null,
+  };
+}
+
+function readError(status: number): never {
+  if (status === 403) throw new IntegrationError("Google Drive denied read access. Reconnect Google Drive to grant read-only access.");
+  throw new IntegrationError(`Could not read Google Drive (${status}).`);
+}
+
+// Metadata of any Drive item the connected account can see; null if missing/trashed/inaccessible.
+export async function getDriveItemMeta(itemId: string): Promise<DriveItemMeta | null> {
+  const res = await driveFetch<Record<string, unknown>>(`/files/${encodeURIComponent(itemId)}?fields=${ITEM_FIELDS}&${ALL_DRIVES}`);
+  if (res.status === 404) return null;
+  if (res.status !== 200 || !res.data) readError(res.status);
+  const item = toItem(res.data);
+  return item.trashed ? null : item;
+}
+
+// Direct children of a folder with one of the given MIME types (newest first, max 200).
+export async function listDriveFolderFiles(folderId: string, mimeTypes: readonly string[]): Promise<DriveItemMeta[]> {
+  const q = [`'${folderId}' in parents`, "trashed=false", `(${mimeTypes.map((m) => `mimeType='${m}'`).join(" or ")})`].join(" and ");
+  const params = new URLSearchParams({
+    q,
+    fields: `files(${ITEM_FIELDS})`,
+    pageSize: "200",
+    orderBy: "modifiedTime desc",
+    supportsAllDrives: "true",
+    includeItemsFromAllDrives: "true",
+  });
+  const res = await driveFetch<{ files?: Record<string, unknown>[] }>(`/files?${params}`);
+  if (res.status !== 200) readError(res.status);
+  return (res.data?.files ?? []).map(toItem);
+}
+
+// Downloads a file's bytes server-side (for fal.ai references / Meta image upload).
+export async function downloadDriveFile(fileId: string, maxBytes: number): Promise<{ bytes: ArrayBuffer; mimeType: string }> {
+  const accessToken = await getAccessToken();
+  const res = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media&${ALL_DRIVES}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (res.status === 404) throw new IntegrationError("The Google Drive file no longer exists.");
+  if (res.status === 401 || res.status === 403) readError(403);
+  if (!res.ok) throw new IntegrationError(`Could not download the Google Drive file (${res.status}).`);
+  const declared = Number(res.headers.get("content-length") ?? 0);
+  if (declared > maxBytes) throw new IntegrationError("The Google Drive file is too large.");
+  const bytes = await res.arrayBuffer();
+  if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) throw new IntegrationError("The Google Drive file is empty or too large.");
+  return { bytes, mimeType: (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase() };
+}
+
+// Thumbnail bytes for a Drive file (fetched server-side; the token is never exposed).
+export async function fetchDriveThumbnail(thumbnailLink: string): Promise<{ bytes: ArrayBuffer; contentType: string } | null> {
+  let url: URL;
+  try {
+    url = new URL(thumbnailLink);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== "https:" || !(host.endsWith(".googleusercontent.com") || host === "drive.google.com")) return null;
+  const accessToken = await getAccessToken();
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+    redirect: "follow",
+    signal: AbortSignal.timeout(15_000),
+  });
+  const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (!res.ok || !contentType.startsWith("image/")) return null;
+  const bytes = await res.arrayBuffer();
+  return bytes.byteLength > 0 && bytes.byteLength <= 5 * 1024 * 1024 ? { bytes, contentType } : null;
 }
 
 export async function isGoogleDriveConnected(): Promise<boolean> {

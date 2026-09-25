@@ -32,6 +32,11 @@ export interface Creative {
   drive_upload_status: "not_uploaded" | "uploading" | "uploaded" | "failed";
   drive_uploaded_at: string | null;
   drive_error: string | null;
+  drive_mime_type: string | null;
+  drive_file_name: string | null;
+  // "generated" = made by Fal.ai; "drive" = an existing image/video from a client Drive source.
+  source: "generated" | "drive";
+  drive_source_id: string | null;
 }
 
 // Caller's session: RLS limits rows to super admins or sub-admins with `content` on an

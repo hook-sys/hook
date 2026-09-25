@@ -35,3 +35,18 @@ export async function resolve(specifier, context, next) {
   if (/^next\/[a-z-]+$/.test(specifier)) return next(`${specifier}.js`, context);
   return next(specifier, context);
 }
+
+// Node's type stripping doesn't handle JSX: compile .tsx components with the project's
+// TypeScript compiler (automatic JSX runtime) so they can be rendered in tests.
+let ts;
+export async function load(url, context, next) {
+  if (!url.startsWith("file:") || !url.endsWith(".tsx")) return next(url, context);
+  ts ??= (await import("typescript")).default;
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL(url), "utf8");
+  const out = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, verbatimModuleSyntax: false },
+    fileName: fileURLToPath(url),
+  });
+  return { format: "module", source: out.outputText, shortCircuit: true };
+}

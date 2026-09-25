@@ -3,11 +3,15 @@ import { notFound } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ActionButton } from "@/components/admin/ActionButton";
 import { CampaignCreativePicker } from "@/components/admin/campaigns/CampaignCreativePicker";
+import { CampaignCreativeSource } from "@/components/admin/campaigns/CampaignCreativeSource";
+import { driveCreativeThumbnail } from "@/components/admin/creative/CreativeCard";
+import { listClientDriveSources } from "@/lib/drive/sources";
 import { CampaignDetailsForm } from "@/components/admin/campaigns/CampaignDetailsForm";
 import { MetaReadinessNotice } from "@/components/admin/campaigns/MetaReadinessNotice";
 import { PublishPanel } from "@/components/admin/campaigns/PublishPanel";
 import { CampaignStatusBadge } from "@/components/admin/creative/CreativeStatusBadge";
 import {
+  addDriveCreativeToCampaign,
   publishCampaign,
   setCampaignMetaAssets,
   setCampaignCreatives,
@@ -54,12 +58,13 @@ export default async function CampaignDetailPage({ params }: PageProps<"/admin/c
   const campaign = await getCampaign(client.id, campaignId);
   if (!campaign) notFound();
 
-  const [product, selectedIds, readyCreatives, meta, assignments] = await Promise.all([
+  const [product, selectedIds, readyCreatives, meta, assignments, driveSources] = await Promise.all([
     getProduct(client.id, campaign.product_id),
     getCampaignCreativeIds(client.id, campaign.id),
     listCreatives(client.id, { status: "ready" }),
     getMetaConnectionState(),
     getClientMetaAssignments(client.id),
+    listClientDriveSources(client.id),
   ]);
   const selected = await getCreativesByIds(client.id, selectedIds);
   const editable = campaign.status === "draft" || campaign.status === "ready_for_review";
@@ -69,8 +74,8 @@ export default async function CampaignDetailPage({ params }: PageProps<"/admin/c
   const pickerCreatives = [...readyCreatives, ...selected.filter((c) => !readyCreatives.some((r) => r.id === c.id))].map((c) => ({
     id: c.id,
     media: c.media,
-    previewUrl: c.status === "ready" ? c.asset_url : null,
-    label: `${c.brief.concept ?? CREATIVE_TYPE_LABELS[c.creative_type]} (${c.media}, ${c.format}${c.status === "ready" ? "" : `, ${c.status}`})`,
+    previewUrl: c.source === "drive" ? driveCreativeThumbnail(c) : c.status === "ready" ? c.asset_url : null,
+    label: `${c.source === "drive" ? `Drive: ${c.drive_file_name ?? "file"}` : (c.brief.concept ?? CREATIVE_TYPE_LABELS[c.creative_type])} (${c.media}, ${c.format}${c.status === "ready" ? "" : `, ${c.status}`})`,
   }));
 
   const blockers = isSuperAdmin
@@ -147,7 +152,16 @@ export default async function CampaignDetailPage({ params }: PageProps<"/admin/c
             <CardHeader>
               <CardTitle>Creatives</CardTitle>
             </CardHeader>
-            <CardContent className="py-6">
+            <CardContent className="space-y-4 py-6">
+              {editable && (
+                <CampaignCreativeSource
+                  clientId={client.id}
+                  studioHref={`/admin/clients/${client.id}/creative-studio`}
+                  sources={driveSources.map((d) => ({ id: d.id, name: d.name }))}
+                  action={addDriveCreativeToCampaign.bind(null, client.id, campaign.id)}
+                  defaultHatogStage={campaign.hatog_stage}
+                />
+              )}
               <CampaignCreativePicker
                 action={setCampaignCreatives.bind(null, client.id, campaign.id)}
                 creatives={pickerCreatives}

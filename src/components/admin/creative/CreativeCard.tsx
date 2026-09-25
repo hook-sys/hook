@@ -5,7 +5,28 @@ import { CREATIVE_TYPE_LABELS } from "@/lib/creative/options";
 import type { Creative } from "@/lib/services/creatives";
 import { HATOG_STAGE_LABELS } from "@/types/ai";
 
-export function CreativePreview({ creative }: { creative: Pick<Creative, "media" | "status" | "asset_url" | "thumbnail_url"> }) {
+// Drive creatives are previewed through the permission-checked thumbnail proxy (Drive files
+// are private; the Google token stays on the server).
+export function driveCreativeThumbnail(creative: Pick<Creative, "id" | "client_id">): string {
+  return `/api/drive/thumbnail?${new URLSearchParams({ client: creative.client_id, creative: creative.id })}`;
+}
+
+export function CreativePreview({
+  creative,
+}: {
+  creative: Pick<Creative, "id" | "client_id" | "media" | "status" | "asset_url" | "thumbnail_url" | "source">;
+}) {
+  if (creative.source === "drive") {
+    return (
+      <div className="relative">
+        {/* eslint-disable-next-line @next/next/no-img-element -- same-origin Drive thumbnail proxy */}
+        <img src={driveCreativeThumbnail(creative)} alt="" className="aspect-square w-full rounded-md bg-slate-100 object-contain" />
+        <span className="absolute left-2 top-2 rounded bg-white/90 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600">
+          Google Drive {creative.media}
+        </span>
+      </div>
+    );
+  }
   if (creative.status === "ready" && creative.asset_url) {
     return creative.media === "video" ? (
       <video src={creative.asset_url} controls preload="metadata" className="aspect-video w-full rounded-md bg-black object-contain" />
@@ -38,6 +59,7 @@ export function CreativeCard({
   canUploadToDrive?: boolean;
 }) {
   const brief = creative.brief;
+  const openUrl = creative.source === "drive" ? creative.drive_web_url : creative.asset_url;
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4">
       <CreativePreview creative={creative} />
@@ -45,6 +67,7 @@ export function CreativeCard({
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-900">{brief.concept ?? CREATIVE_TYPE_LABELS[creative.creative_type]}</p>
           <p className="text-xs text-slate-500">
+            {creative.source === "drive" && <>From Google Drive: {creative.drive_file_name ?? "file"} · </>}
             {productName} · {CREATIVE_TYPE_LABELS[creative.creative_type]} · {creative.format}
             {creative.duration_seconds ? ` · ${creative.duration_seconds}s` : ""}
           </p>
@@ -107,9 +130,9 @@ export function CreativeCard({
       </details>
 
       <div className="mt-auto flex flex-wrap items-start gap-2">
-        {creative.status === "ready" && creative.asset_url && (
+        {creative.status === "ready" && openUrl && (
           <a
-            href={creative.asset_url}
+            href={openUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex h-8 items-center rounded-md border border-slate-300 px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
@@ -117,11 +140,11 @@ export function CreativeCard({
             Open
           </a>
         )}
-        {canUploadToDrive && creative.status === "ready" && creative.drive_upload_status !== "uploading" && (
+        {canUploadToDrive && creative.source !== "drive" && creative.status === "ready" && creative.drive_upload_status !== "uploading" && (
           <ActionButton
             action={uploadCreativeToDriveAction.bind(null, creative.client_id, creative.id)}
-            label={creative.drive_upload_status === "failed" ? "Retry Drive Upload" : creative.drive_upload_status === "uploaded" ? "Verify in Drive" : "Upload to Drive"}
-            pendingLabel="Uploading..."
+            label={creative.drive_upload_status === "failed" ? "Retry Save to Google Drive" : creative.drive_upload_status === "uploaded" ? "Verify in Drive" : "Save to Google Drive"}
+            pendingLabel="Saving to Drive..."
           />
         )}
         {(creative.status === "ready" || creative.status === "failed") && (

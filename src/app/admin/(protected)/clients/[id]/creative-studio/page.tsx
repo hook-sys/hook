@@ -22,9 +22,12 @@ import { isGoogleDriveConnected } from "@/lib/integrations/google-drive";
 import { ActionButton } from "@/components/admin/ActionButton";
 import { CampaignCreativePicker } from "@/components/admin/campaigns/CampaignCreativePicker";
 import { uploadAllReadyToDriveAction, uploadSelectedToDriveAction } from "@/lib/actions/creatives";
-import { listClientImageAssets, listProducts } from "@/lib/services/products";
+import { listProducts } from "@/lib/services/products";
 import { getFalModelSelection } from "@/lib/creative/fal-selection";
-import { isFalReferenceMime } from "@/lib/integrations/drive-media";
+import { ActiveModelsPanel } from "@/components/admin/creative/ActiveModelsPanel";
+import { loadBrainConfig } from "@/lib/ai/brain";
+import { AI_PROVIDER_LABELS, resolveRoute } from "@/lib/ai/providers/common";
+import { listClientDriveSources } from "@/lib/drive/sources";
 
 const ALL_TYPES = Object.keys(CREATIVE_TYPE_LABELS) as CreativeType[];
 
@@ -41,12 +44,16 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
   const query = await searchParams;
   const pick = (v: unknown, allowed: readonly string[]) => (typeof v === "string" && allowed.includes(v) ? v : "");
 
-  const [products, images, readiness, falModels] = await Promise.all([
+  const [products, readiness, falModels, brainConfig, driveSources] = await Promise.all([
     listProducts(client.id),
-    listClientImageAssets(client.id),
     getAiProviderReadiness(),
     getFalModelSelection(),
+    loadBrainConfig(),
+    listClientDriveSources(client.id),
   ]);
+  // Saved Super Admin configuration — the exact models this page will use.
+  const route = resolveRoute(brainConfig);
+  const brain = route.ok ? { providerLabel: AI_PROVIDER_LABELS[route.primary.provider], model: route.primary.model } : null;
   const productIds = products.map((p) => p.id);
   const filters = {
     productId: pick(query.product, productIds),
@@ -63,16 +70,7 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
   const notInDrive = readyCreatives.filter((c) => c.drive_upload_status !== "uploaded" && c.drive_upload_status !== "uploading");
   const productName = new Map(products.map((p) => [p.id, p.name]));
 
-  const generatorProducts = products
-    .filter((p) => p.status !== "archived")
-    .map((p) => ({
-      id: p.id,
-      name: p.name,
-      // Drive images in a format fal.ai accepts as a reference.
-      images: images
-        .filter((a) => a.product_id === p.id && a.drive_file_id && isFalReferenceMime(a.mime_type))
-        .map((a, i) => ({ id: a.id, label: a.label || `Image ${i + 1}` })),
-    }));
+  const generatorProducts = products.filter((p) => p.status !== "archived").map((p) => ({ id: p.id, name: p.name }));
 
   return (
     <div className="space-y-6">
@@ -90,6 +88,15 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
       <ProviderBanner provider="Fal.ai" state={readiness.fal} isSuperAdmin={isSuperAdmin} />
       <GeneratingPoller clientId={client.id} count={allGenerating.length} />
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Active Models</CardTitle>
+        </CardHeader>
+        <CardContent className="py-5">
+          <ActiveModelsPanel brain={brain} falModels={falModels} isSuperAdmin={isSuperAdmin} />
+        </CardContent>
+      </Card>
+
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -97,7 +104,10 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
           </CardHeader>
           <CardContent className="py-6">
             <CreativeGeneratorForm
+              clientId={client.id}
               products={generatorProducts}
+              driveSources={driveSources.map((d) => ({ id: d.id, name: d.name }))}
+              brain={brain}
               generateAction={generateCreative.bind(null, client.id)}
               previewAction={isSuperAdmin ? previewCreativeRequest.bind(null, client.id) : undefined}
               canGenerate={readiness.brain === "ready" && readiness.fal === "ready"}

@@ -6,6 +6,7 @@ import { ClientStatusToggleForm } from "@/components/admin/ClientStatusToggleFor
 import { ClientForm } from "@/components/admin/ClientForm";
 import { MetaAssetsCard } from "@/components/admin/client-assets/MetaAssetsCard";
 import { DriveFolderCard } from "@/components/admin/client-assets/DriveFolderCard";
+import { DriveSourcesCard } from "@/components/admin/client-assets/DriveSourcesCard";
 import { ClientProductsCard } from "@/components/admin/client-assets/ClientProductsCard";
 import { ClientAiKnowledgeCard } from "@/components/admin/client-assets/ClientAiKnowledgeCard";
 import { updateClient } from "@/lib/actions/clients";
@@ -82,6 +83,9 @@ export default async function ClientDetailPage({ params }: PageProps<"/admin/cli
 
           <div id="meta-assets" className="scroll-mt-6">
             <MetaAssetsCard clientId={client.id} isSuperAdmin={isSuperAdmin} />
+          </div>
+          <div id="drive-sources" className="scroll-mt-6">
+            <DriveSourcesCard clientId={client.id} isSuperAdmin={isSuperAdmin} />
           </div>
           <ClientProductsCard clientId={client.id} isSuperAdmin={isSuperAdmin} />
           <ClientAiKnowledgeCard clientId={client.id} isSuperAdmin={isSuperAdmin} />

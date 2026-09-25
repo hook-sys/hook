@@ -17,6 +17,8 @@ import { getProduct } from "@/lib/services/products";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { createCampaignDraftCore, resolveCampaignMeta } from "@/lib/workflows/campaigns";
+import { DriveSourceError } from "@/lib/drive/sources";
+import { registerDriveCreative } from "@/lib/workflows/drive-assets";
 
 export interface CampaignActionState {
   status: "idle" | "error" | "success";
@@ -288,4 +290,48 @@ export async function publishCampaign(
 
   revalidatePath(campaignsPath(clientId, campaignId));
   return { status: "success", message: "Created in Meta as PAUSED. Review and activate it in Ads Manager." };
+}
+
+// "Use existing Drive creative": adds an image/video from one of the client's configured
+// Google Drive sources to the campaign — no brief, no Fal.ai generation, no API cost.
+export async function addDriveCreativeToCampaign(
+  clientId: string,
+  campaignId: string,
+  _prev: CampaignActionState,
+  formData: FormData
+): Promise<CampaignActionState> {
+  const profile = await requirePermission("campaigns");
+  const campaign = await getCampaign(clientId, campaignId);
+  if (!campaign) return { status: "error", message: "Campaign not found." };
+  if (!EDITABLE.includes(campaign.status)) return { status: "error", message: "Move the campaign back to Draft to change creatives." };
+
+  const ids = await getCampaignCreativeIds(clientId, campaignId);
+  if (ids.length >= 10) return { status: "error", message: "A campaign can have up to 10 creatives." };
+
+  let registered;
+  try {
+    registered = await registerDriveCreative(
+      clientId,
+      {
+        productId: campaign.product_id,
+        sourceId: String(formData.get("drive_creative_source_id") ?? ""),
+        fileId: String(formData.get("drive_creative_file_id") ?? ""),
+        hatogStage: String(formData.get("hatog_stage") ?? ""),
+        format: String(formData.get("format") ?? ""),
+      },
+      profile.id
+    );
+  } catch (error) {
+    return { status: "error", message: error instanceof DriveSourceError ? error.message : "Could not use the Drive asset." };
+  }
+  if (ids.includes(registered.creativeId)) return { status: "success", message: "That Drive creative is already in this campaign." };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("campaign_creatives")
+    .insert({ campaign_id: campaignId, creative_id: registered.creativeId, client_id: clientId, position: ids.length });
+  if (error) return { status: "error", message: "Could not add the Drive creative to the campaign." };
+
+  revalidatePath(campaignsPath(clientId, campaignId));
+  return { status: "success", message: "Drive creative added to the campaign (no generation needed)." };
 }

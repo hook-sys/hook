@@ -66,18 +66,20 @@ export async function uploadCreativeToDrive(profile: AdminProfile, clientId: str
   const supabase = await createClient();
   const { data: creative } = await supabase
     .from("creatives")
-    .select("id, product_id, media, creative_type, format, status, asset_url, drive_file_id, drive_upload_status, drive_upload_started_at")
+    .select("id, product_id, media, creative_type, format, status, asset_url, drive_file_id, drive_upload_status, drive_upload_started_at, source")
     .eq("client_id", client.id)
     .eq("id", creativeId)
     .maybeSingle();
   if (!creative) throw new DriveUploadError("Creative not found.");
+  if (creative.source === "drive") throw new DriveUploadError("This creative is already a Google Drive file.");
   if (creative.status !== "ready" || !creative.asset_url) throw new DriveUploadError("Only Ready creatives can be uploaded.");
 
   const admin = createAdminClient();
   const record = (values: Record<string, unknown>) => admin.from("creatives").update(values).eq("client_id", client.id).eq("id", creative.id);
-  const markUploaded = async (file: { id: string; webViewLink: string | null; mimeType: string }, folderId: string | null) => {
+  const markUploaded = async (file: { id: string; name?: string; webViewLink: string | null; mimeType: string }, folderId: string | null) => {
     await record({
       drive_file_id: file.id,
+      drive_file_name: file.name ? file.name.slice(0, 500) : null,
       drive_web_url: file.webViewLink && /^https:\/\/(drive|docs)\.google\.com\//i.test(file.webViewLink) ? file.webViewLink : null,
       drive_mime_type: /^(image|video)\/[a-z0-9.+-]+$/.test(file.mimeType) ? file.mimeType : null,
       ...(folderId ? { drive_folder_id: folderId } : {}),
