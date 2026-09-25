@@ -36,7 +36,7 @@ export default async function AiAgentPage({ params }: PageProps<"/admin/clients/
         </p>
       </div>
 
-      <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} isSuperAdmin={isSuperAdmin} />
+      <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} detail={readiness.brainDetail} isSuperAdmin={isSuperAdmin} />
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">

@@ -25,7 +25,7 @@ export default async function AdminSettingsPage() {
             <CardContent className="py-5">
               <p className="font-semibold text-slate-900">AI Brain</p>
               <p className="mt-1 text-sm text-slate-500">
-                Default AI provider and model, task-specific models and optional fallback.
+                The AI provider and model used for all AI brain features.
               </p>
             </CardContent>
           </Card>

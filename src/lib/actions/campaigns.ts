@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { META_CTAS, META_OBJECTIVES } from "@/lib/ai/campaign-strategy";
-import { taskReadiness } from "@/lib/ai/brain";
+import { brainReadiness } from "@/lib/ai/brain";
 import { requirePermission, requireSuperAdmin } from "@/lib/auth/session";
 import { canTransitionCampaign, type CampaignStatus } from "@/lib/creative/status";
 import { getMetaConnectionState, isMetaPublishingEnabled } from "@/lib/integrations/meta";
@@ -40,7 +40,7 @@ export async function createCampaignDraft(
   const mode = get("mode") === "ai" ? "ai" : "blank";
 
   if (mode === "ai") {
-    const issue = await taskReadiness("strategy");
+    const issue = await brainReadiness();
     if (issue) return { status: "error", message: `${issue} Or create a blank draft.` };
   }
   const result = await createCampaignDraftCore(profile, clientId, {

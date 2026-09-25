@@ -132,7 +132,9 @@ export default async function CalendarItemPage({ params }: PageProps<"/admin/cli
                     multiline
                   />
                 ) : (
-                  <p className="text-sm text-amber-700">Connect {readiness.brainLabel} to regenerate items.</p>
+                  <p className="text-sm text-amber-700">
+                    {readiness.brainDetail ?? `Connect ${readiness.brainLabel} to regenerate items.`}
+                  </p>
                 )}
               </CardContent>
             </Card>

@@ -248,7 +248,7 @@ export default async function AnalyticsPage({ params, searchParams }: PageProps<
           <CardTitle>AI Marketing Reports</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 py-6">
-          <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} isSuperAdmin={isSuperAdmin} />
+          <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} detail={readiness.brainDetail} isSuperAdmin={isSuperAdmin} />
           {canReport ? (
             <ActionButton
               action={generateReportAction.bind(null, client.id)}

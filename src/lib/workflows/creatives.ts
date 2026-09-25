@@ -7,7 +7,7 @@ import {
   type CreativeBriefRequest,
 } from "@/lib/ai/creative-brief";
 import { aiErrorMessage, generateAndLog } from "@/lib/ai/generate";
-import { taskReadiness } from "@/lib/ai/brain";
+import { brainReadiness } from "@/lib/ai/brain";
 import { enforceAiRateLimit, getAiProviderReadiness, logGeneration } from "@/lib/ai/usage";
 import { checkFalCapabilities, falBillingUnits, falModelFor, planFalJob } from "@/lib/creative/fal-models";
 import {
@@ -145,12 +145,12 @@ export async function startCreativeGeneration(
   const reference = await resolveReferenceImage(client.id, product.id, request.referenceAssetId);
   if ("error" in reference) return { ok: false, message: reference.error! };
 
-  // Everything checkable for free is checked before paying for a Claude call.
+  // Everything checkable for free is checked before paying for an AI brain call.
   const capabilityError = checkFalCapabilities(request.media, request.format, request.durationSeconds, reference.url !== null);
   if (capabilityError) return { ok: false, message: capabilityError };
 
   const readiness = await getAiProviderReadiness();
-  const brainIssue = await taskReadiness("creative_brief");
+  const brainIssue = await brainReadiness();
   if (brainIssue) return { ok: false, message: brainIssue };
   if (readiness.fal !== "ready") return { ok: false, message: "Connect Fal.ai in Settings → Integrations first." };
 

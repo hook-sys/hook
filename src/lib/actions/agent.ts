@@ -5,9 +5,8 @@ import { createAgentModelCaller } from "@/lib/agent/model";
 import { AGENT_LIMITS, type AgentOptions } from "@/lib/agent/policy";
 import { runAgentLoop } from "@/lib/agent/runner";
 import { createToolExecutor } from "@/lib/agent/tools";
-import { providerReady, routeForTask } from "@/lib/ai/brain";
-import { AI_PROVIDER_LABELS, LOG_PROVIDER, estimateCostUsd } from "@/lib/ai/providers/common";
-import { IntegrationError } from "@/lib/integrations/types";
+import { brainReadiness } from "@/lib/ai/brain";
+import { LOG_PROVIDER, estimateCostUsd } from "@/lib/ai/providers/common";
 import { enforceAiRateLimit, logGeneration } from "@/lib/ai/usage";
 import { requirePermission } from "@/lib/auth/session";
 import { logEvent } from "@/lib/observability";
@@ -28,15 +27,9 @@ export async function runAgentAction(clientId: string, _prev: AgentActionState, 
   const request = String(formData.get("request") ?? "").trim();
   if (!request) return { status: "error", message: "Describe what you want the agent to do." };
   if (request.length > AGENT_LIMITS.maxRequestChars) return { status: "error", message: `Keep the request under ${AGENT_LIMITS.maxRequestChars} characters.` };
-  // The agent runs on the provider/model configured for "Campaign Intelligence".
-  try {
-    const { primary } = await routeForTask("campaign_intelligence");
-    if (!(await providerReady(primary.provider))) {
-      return { status: "error", message: `Connect ${AI_PROVIDER_LABELS[primary.provider]} in Settings → Integrations first.` };
-    }
-  } catch (error) {
-    return { status: "error", message: error instanceof IntegrationError ? error.message : "The AI brain is not configured." };
-  }
+  // The agent runs on the globally selected AI brain provider/model.
+  const brainIssue = await brainReadiness();
+  if (brainIssue) return { status: "error", message: brainIssue };
 
   const options: AgentOptions = {
     allowPaidGeneration: formData.get("allow_paid_generation") === "on",

@@ -1,11 +1,11 @@
-// Multi-provider AI brain: Claude / OpenAI / Gemini routing, discovery, fallback and usage.
+// AI brain: ONE globally selected provider (Claude / OpenAI / Gemini) + model for every task;
+// discovery, normalization, usage logging and access control.
 // Runs with USE_FAKES=claude,store,admin,server,session,nextcache: no network, no real keys, in-memory Supabase.
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Anthropic from "@anthropic-ai/sdk";
 import {
   AI_PROVIDERS,
   EMPTY_BRAIN_CONFIG,
@@ -19,7 +19,7 @@ import {
   validateModelChoice,
 } from "@/lib/ai/providers/common";
 import { geminiAgentBody, normalizeGeminiAgentTurn, openAIAgentBody } from "@/lib/ai/providers/wire";
-import { refreshProviderModels, taskReadiness } from "@/lib/ai/brain";
+import { brainReadiness, refreshProviderModels } from "@/lib/ai/brain";
 import { generateAndLog } from "@/lib/ai/generate";
 import { createAgentModelCaller } from "@/lib/agent/model";
 import { runAgentLoop } from "@/lib/agent/runner";
@@ -46,20 +46,10 @@ const MODELS = [
   { provider: "claude", model_id: "claude-old", display_name: "Old", is_available: true, supports_structured: false, supports_adaptive_thinking: false },
 ];
 
-function setBrain({ defaultProvider = "claude", defaults = {}, tasks = [], fallback = null } = {}) {
+function setBrain({ provider = null, model = null } = {}) {
   globalThis.__db = {
     ai_provider_models: structuredClone(MODELS),
-    ai_brain_settings: [
-      {
-        id: true,
-        default_provider: defaultProvider,
-        fallback_enabled: Boolean(fallback),
-        fallback_provider: fallback?.provider ?? null,
-        fallback_model: fallback?.model ?? null,
-      },
-    ],
-    ai_provider_settings: Object.entries(defaults).map(([provider, default_model]) => ({ provider, enabled: true, default_model })),
-    ai_task_models: tasks.map((t) => ({ enabled: true, ...t })),
+    ai_brain_settings: provider ? [{ id: true, default_provider: provider, default_model: model }] : [],
     ai_generation_logs: [],
   };
 }
@@ -146,39 +136,18 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 test("route: nothing configured keeps the existing Claude default model", () => {
-  const r = resolveRoute(EMPTY_BRAIN_CONFIG, "strategy");
-  assert.deepEqual(r, { ok: true, primary: { provider: "claude", model: LEGACY_CLAUDE_MODEL }, fallback: null });
+  assert.deepEqual(resolveRoute(EMPTY_BRAIN_CONFIG), { ok: true, primary: { provider: "claude", model: LEGACY_CLAUDE_MODEL } });
 });
 
-test("route: default provider + default model; missing default model is an explicit error", () => {
-  const cfg = { ...EMPTY_BRAIN_CONFIG, defaultProvider: "openai", providerDefaults: { openai: "gpt-5.1" } };
-  assert.deepEqual(resolveRoute(cfg, "content").primary, { provider: "openai", model: "gpt-5.1" });
-  const none = resolveRoute({ ...EMPTY_BRAIN_CONFIG, defaultProvider: "gemini" }, "content");
+test("route: the selected provider + model; a provider without a selected model is an explicit error", () => {
+  assert.deepEqual(resolveRoute({ provider: "openai", model: "gpt-5.1" }).primary, { provider: "openai", model: "gpt-5.1" });
+  assert.deepEqual(resolveRoute({ provider: "claude", model: "claude-sonnet-5" }).primary, { provider: "claude", model: "claude-sonnet-5" });
+  const none = resolveRoute({ provider: "gemini", model: null });
   assert.equal(none.ok, false);
-  assert.match(none.error, /Select a default Google Gemini model/);
+  assert.match(none.error, /Select a Google Gemini model in Settings → AI Brain/);
 });
 
-test("route: task-specific provider/model overrides the default; disabled rows are ignored", () => {
-  const cfg = {
-    ...EMPTY_BRAIN_CONFIG,
-    tasks: { analytics_report: { provider: "gemini", model: "gemini-3-pro", enabled: true }, content: { provider: "openai", model: "gpt-5.1", enabled: false } },
-  };
-  assert.deepEqual(resolveRoute(cfg, "analytics_report").primary, { provider: "gemini", model: "gemini-3-pro" });
-  assert.deepEqual(resolveRoute(cfg, "content").primary, { provider: "claude", model: LEGACY_CLAUDE_MODEL });
-  assert.deepEqual(resolveRoute(cfg, "strategy").primary, { provider: "claude", model: LEGACY_CLAUDE_MODEL });
-});
-
-test("route: fallback OFF by default; ON only when enabled; never equal to the primary", () => {
-  assert.equal(resolveRoute(EMPTY_BRAIN_CONFIG, "strategy").fallback, null);
-  const off = { ...EMPTY_BRAIN_CONFIG, fallback: { enabled: false, provider: "openai", model: "gpt-5.1" } };
-  assert.equal(resolveRoute(off, "strategy").fallback, null);
-  const on = { ...EMPTY_BRAIN_CONFIG, fallback: { enabled: true, provider: "openai", model: "gpt-5.1" } };
-  assert.deepEqual(resolveRoute(on, "strategy").fallback, { provider: "openai", model: "gpt-5.1" });
-  const same = { ...EMPTY_BRAIN_CONFIG, fallback: { enabled: true, provider: "claude", model: LEGACY_CLAUDE_MODEL } };
-  assert.equal(resolveRoute(same, "strategy").fallback, null);
-});
-
-test("tasks: generation types map to the five routed tasks; Fal.ai media types are not AI-brain tasks", () => {
+test("tasks: generation types map to the five task labels; Fal.ai media types are not AI-brain tasks", () => {
   assert.equal(taskForGeneration("campaign_strategy"), "strategy");
   assert.equal(taskForGeneration("content_calendar"), "content");
   assert.equal(taskForGeneration("calendar_item"), "content");
@@ -285,12 +254,11 @@ test("Claude provider: existing default workflow unchanged; usage + cost logged"
   assert.deepEqual([log.input_tokens, log.output_tokens], [1000, 200]);
   assert.equal(log.estimated_cost_usd, 0.01);
   assert.equal(typeof log.duration_ms, "number");
-  assert.equal(log.fallback_used, false);
   assert.equal(log.client_id, CLIENT);
 });
 
 test("OpenAI provider: structured output via json_schema, key only in the Authorization header", async () => {
-  setBrain({ defaultProvider: "openai", defaults: { openai: "gpt-5.1" } });
+  setBrain({ provider: "openai", model: "gpt-5.1" });
   stubFetch(() => openAIReply(OK_JSON));
   const r = await generate("content_calendar");
   assert.deepEqual([r.data.headline, r.provider, r.model, r.inputTokens, r.outputTokens], ["Hi", "openai", "gpt-5.1-2026-01-01", 300, 40]);
@@ -309,7 +277,7 @@ test("OpenAI provider: structured output via json_schema, key only in the Author
 });
 
 test("Gemini provider: responseJsonSchema, thought parts excluded, thinking tokens counted", async () => {
-  setBrain({ tasks: [{ task: "analytics_report", provider: "gemini", model: "gemini-3-pro" }] });
+  setBrain({ provider: "gemini", model: "gemini-3-pro" });
   stubFetch(() => geminiReply([{ text: "thinking…", thought: true }, { text: OK_JSON }]));
   const r = await generate("marketing_report");
   assert.deepEqual([r.data.headline, r.provider, r.inputTokens, r.outputTokens], ["Hi", "gemini", 500, 85]);
@@ -323,17 +291,29 @@ test("Gemini provider: responseJsonSchema, thought parts excluded, thinking toke
   assert.deepEqual([logs()[0].provider, logs()[0].task], ["gemini", "analytics_report"]);
 });
 
-test("task-specific model: only that task moves; other tasks keep the default", async () => {
-  setBrain({ defaultProvider: "openai", defaults: { openai: "gpt-5.1" }, tasks: [{ task: "creative_brief", provider: "claude", model: "claude-opus-5" }] });
+test("one provider for everything: every task uses the selected model; connected unselected providers are never called", async () => {
+  setBrain({ provider: "openai", model: "gpt-5.1" });
   claudeReplies(claudeMsg(OK_JSON));
-  assert.equal((await generate("creative_brief")).provider, "claude");
   stubFetch(() => openAIReply(OK_JSON));
-  assert.equal((await generate("campaign_strategy")).provider, "openai");
-  assert.equal(fetchCalls[0].body.model, "gpt-5.1");
+  for (const type of ["campaign_strategy", "content_calendar", "calendar_item", "marketing_report", "creative_brief"]) {
+    assert.equal((await generate(type)).provider, "openai", type);
+  }
+  assert.equal(fetchCalls.length, 5);
+  assert.ok(fetchCalls.every((c) => c.url === "https://api.openai.com/v1/chat/completions" && c.body.model === "gpt-5.1"));
+  assert.equal(claudeRequests.length, 0, "Claude is connected but not selected, so it is never called");
+  assert.deepEqual([...new Set(logs().map((l) => l.task))], ["strategy", "content", "analytics_report", "creative_brief"]);
+  assert.ok(logs().every((l) => l.provider === "openai" && l.model === "gpt-5.1-2026-01-01"));
+
+  setBrain({ provider: "claude", model: "claude-opus-5" });
+  claudeReplies(claudeMsg(OK_JSON), claudeMsg(OK_JSON));
+  stubFetch(() => openAIReply(OK_JSON));
+  assert.equal((await generate("marketing_report")).provider, "claude");
+  assert.equal((await generate("creative_brief")).provider, "claude");
+  assert.equal(fetchCalls.length, 0, "OpenAI is connected but not selected, so it is never called");
 });
 
 test("structured output normalized: refusals, truncation, invalid JSON and validation fail the same way", async () => {
-  setBrain({ defaultProvider: "openai", defaults: { openai: "gpt-5.1" } });
+  setBrain({ provider: "openai", model: "gpt-5.1" });
   stubFetch(() => openAIReply(null, { message: { refusal: "I can't help with that." } }));
   await assert.rejects(generate(), /OpenAI declined/);
   stubFetch(() => openAIReply('{"headline":', { choice: { finish_reason: "length" } }));
@@ -343,7 +323,7 @@ test("structured output normalized: refusals, truncation, invalid JSON and valid
   stubFetch(() => openAIReply(JSON.stringify({ headline: "" })));
   await assert.rejects(generate(), /failed validation: headline missing/);
 
-  setBrain({ defaultProvider: "gemini", defaults: { gemini: "gemini-3-pro" } });
+  setBrain({ provider: "gemini", model: "gemini-3-pro" });
   stubFetch(() => geminiReply([], { finishReason: "SAFETY" }));
   await assert.rejects(generate(), /Google Gemini declined/);
   stubFetch(() => ({ body: { promptFeedback: { blockReason: "PROHIBITED_CONTENT" } } }));
@@ -354,7 +334,7 @@ test("structured output normalized: refusals, truncation, invalid JSON and valid
 });
 
 test("provider connection failure: rejected key and unconnected provider give admin-safe errors", async () => {
-  setBrain({ defaultProvider: "openai", defaults: { openai: "gpt-5.1" } });
+  setBrain({ provider: "openai", model: "gpt-5.1" });
   stubFetch(() => ({ status: 401, body: { error: { message: `Incorrect API key provided: ${OPENAI_KEY}` } } }));
   await assert.rejects(generate(), (e) => e instanceof IntegrationError && /OpenAI rejected the API key/.test(e.message) && !e.message.includes(OPENAI_KEY));
 
@@ -366,11 +346,11 @@ test("provider connection failure: rejected key and unconnected provider give ad
   stubFetch(() => openAIReply(OK_JSON));
   await assert.rejects(generate(), /Connect OpenAI in Settings → Integrations first/);
   assert.equal(fetchCalls.length, 0);
-  assert.match(await taskReadiness("strategy"), /Connect OpenAI/);
+  assert.match(await brainReadiness(), /Connect OpenAI/);
 
   globalThis.__fakeStatuses = {};
-  setBrain({ defaultProvider: "gemini" });
-  assert.match(await taskReadiness("strategy"), /Select a default Google Gemini model/);
+  setBrain({ provider: "gemini" });
+  assert.match(await brainReadiness(), /Select a Google Gemini model/);
 });
 
 test("Test buttons: key tests list models without spending tokens; failures never echo the key", async () => {
@@ -388,50 +368,24 @@ test("Test buttons: key tests list models without spending tokens; failures neve
 // Fallback
 // ---------------------------------------------------------------------------
 
-test("fallback OFF: a temporary failure is returned, no other provider is called", async () => {
-  setBrain({ defaultProvider: "openai", defaults: { openai: "gpt-5.1" } });
-  stubFetch(() => ({ status: 503, body: { error: { message: "overloaded" } } }));
+test("no automatic switching: a failure of the selected provider is returned; other providers are never tried", async () => {
+  setBrain({ provider: "openai", model: "gpt-5.1" });
   claudeReplies(claudeMsg(OK_JSON));
-  await assert.rejects(generate(), /OpenAI API error \(503\)/);
-  assert.equal(fetchCalls.length, 1);
-  assert.equal(claudeRequests.length, 0, "no silent provider switch");
-  assert.equal(logs().length, 1);
-});
+  for (const status of [429, 500, 503]) {
+    stubFetch(({ url }) => (url.includes("openai") ? { status, body: {} } : geminiReply([{ text: OK_JSON }])));
+    await assert.rejects(generate(), /OpenAI/);
+    assert.ok(fetchCalls.every((c) => c.url.includes("api.openai.com")), "Gemini never called");
+  }
+  stubFetch(() => new TypeError("fetch failed"));
+  await assert.rejects(generate(), /Could not reach OpenAI/);
+  assert.equal(claudeRequests.length, 0, "Claude never called");
+  assert.ok(logs().every((l) => l.provider === "openai" && l.status === "failed"));
 
-test("fallback ON: temporary failure retried once on the fallback model and logged as fallback", async () => {
-  setBrain({ defaultProvider: "openai", defaults: { openai: "gpt-5.1" }, fallback: { provider: "gemini", model: "gemini-3-pro" } });
-  stubFetch(({ url }) => (url.includes("openai") ? { status: 429, body: {} } : geminiReply([{ text: OK_JSON }])));
-  const r = await generate();
-  assert.equal(r.provider, "gemini");
-  assert.deepEqual(
-    logs().map((l) => [l.provider, l.status, l.fallback_used]),
-    [["openai", "failed", false], ["gemini", "succeeded", true]]
-  );
-});
-
-test("fallback ON: never used for non-temporary failures or an unconnected fallback provider", async () => {
-  setBrain({ defaultProvider: "openai", defaults: { openai: "gpt-5.1" }, fallback: { provider: "gemini", model: "gemini-3-pro" } });
-  stubFetch(({ url }) => (url.includes("openai") ? openAIReply("not json") : geminiReply([{ text: OK_JSON }])));
-  await assert.rejects(generate(), /invalid JSON/);
-  stubFetch(({ url }) => (url.includes("openai") ? { status: 401, body: {} } : geminiReply([{ text: OK_JSON }])));
-  await assert.rejects(generate(), /rejected the API key/);
-  assert.ok(fetchCalls.every((c) => c.url.includes("openai")));
-
-  globalThis.__fakeStatuses = { gemini: "not_connected" };
-  stubFetch(({ url }) => (url.includes("openai") ? { status: 500, body: {} } : geminiReply([{ text: OK_JSON }])));
-  await assert.rejects(generate(), /OpenAI API error \(500\)/);
-  assert.equal(fetchCalls.length, 1);
-});
-
-test("fallback provider failure: both attempts logged; the fallback's error is returned", async () => {
-  setBrain({ defaultProvider: "openai", defaults: { openai: "gpt-5.1" }, fallback: { provider: "claude", model: "claude-opus-5" } });
-  stubFetch(() => ({ status: 503, body: {} }));
-  claudeReplies(new Anthropic.InternalServerError(529, {}, "overloaded", new Headers()));
-  await assert.rejects(generate(), /Claude API error \(529\)/);
-  assert.deepEqual(
-    logs().map((l) => [l.provider, l.status, l.fallback_used]),
-    [["openai", "failed", false], ["anthropic", "failed", true]]
-  );
+  // Selected provider not connected: nothing is called at all (no silent switch).
+  globalThis.__fakeStatuses = { openai: "not_connected" };
+  stubFetch(() => geminiReply([{ text: OK_JSON }]));
+  await assert.rejects(generate(), /Connect OpenAI/);
+  assert.equal(fetchCalls.length + claudeRequests.length, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -465,7 +419,7 @@ test("AI Agent default: Claude with the same tools, adaptive thinking and limits
 });
 
 test("AI Agent uses the configured provider (OpenAI): tools as functions, results as tool messages", async () => {
-  setBrain({ tasks: [{ task: "campaign_intelligence", provider: "openai", model: "gpt-5.1" }] });
+  setBrain({ provider: "openai", model: "gpt-5.1" });
   let turn = 0;
   stubFetch(() =>
     turn++ === 0
@@ -486,7 +440,7 @@ test("AI Agent uses the configured provider (OpenAI): tools as functions, result
 });
 
 test("AI Agent uses the configured provider (Gemini): function calls round-trip with raw parts replayed", async () => {
-  setBrain({ defaultProvider: "gemini", defaults: { gemini: "gemini-3-pro" } });
+  setBrain({ provider: "gemini", model: "gemini-3-pro" });
   let turn = 0;
   const callPart = { functionCall: { name: "get_products", args: {} }, thoughtSignature: "sig-abc" };
   stubFetch(() => (turn++ === 0 ? geminiReply([callPart]) : geminiReply([{ text: "Wallet only." }])));
@@ -560,7 +514,7 @@ test("secrets: no provider key in NEXT_PUBLIC_*; browser components never touch 
 test("access: every AI settings action and the AI Brain page require Super Admin first", () => {
   const actions = read("src/lib/actions/ai-settings.ts");
   const bodies = actions.split(/export async function /).slice(1);
-  assert.equal(bodies.length, 4);
+  assert.equal(bodies.length, 2);
   for (const body of bodies) {
     const firstStatement = body.slice(body.indexOf("{") + 1).trim().split("\n")[0];
     assert.match(firstStatement, /await requireSuperAdmin\(\)/, body.split("(")[0]);
@@ -642,42 +596,36 @@ test("Connect: Claude and Fal.ai keep the existing save-then-test flow (no netwo
   assert.equal(fetchCalls.length, 0);
 });
 
-test("AI Brain settings: OpenAI/Gemini selectable as default; task routing and fallback validated server-side", async () => {
+test("AI Brain settings: one provider + model; OpenAI/Gemini/Claude selectable; mismatches rejected server-side", async () => {
   resetConnectState();
-  const { saveDefaultBrainAction, saveTaskRoutingAction, saveFallbackAction } = await import("@/lib/actions/ai-settings");
+  const { saveAiBrainAction } = await import("@/lib/actions/ai-settings");
 
-  const ok = await saveDefaultBrainAction(idle, form({ provider: "openai", model: "gpt-5.1" }));
+  const ok = await saveAiBrainAction(idle, form({ provider: "openai", model: "gpt-5.1" }));
   assert.equal(ok.status, "success", ok.message);
-  assert.equal(globalThis.__db.ai_brain_settings[0].default_provider, "openai");
-  assert.equal(globalThis.__db.ai_provider_settings.find((p) => p.provider === "openai").default_model, "gpt-5.1");
-  stubFetch(() => openAIReply(OK_JSON));
-  assert.equal((await generate()).provider, "openai", "the saved default is used for real requests");
-
-  assert.equal((await saveDefaultBrainAction(idle, form({ provider: "gemini", model: "gemini-3-pro" }))).status, "success");
-  assert.equal(globalThis.__db.ai_brain_settings[0].default_provider, "gemini");
-
-  const mismatch = await saveDefaultBrainAction(idle, form({ provider: "gemini", model: "gpt-5.1" }));
-  assert.match(mismatch.message, /not a Google Gemini model/);
-  const invented = await saveDefaultBrainAction(idle, form({ provider: "openai", model: "gpt-99-invented" }));
-  assert.match(invented.message, /not discovered/);
-  globalThis.__fakeStatuses = { openai: "not_connected" };
-  assert.match((await saveDefaultBrainAction(idle, form({ provider: "openai", model: "gpt-5.1" }))).message, /Connect OpenAI first/);
-  globalThis.__fakeStatuses = {};
-  assert.equal(globalThis.__db.ai_brain_settings[0].default_provider, "gemini", "rejected choices change nothing");
-
-  const routing = await saveTaskRoutingAction(idle, form({ strategy_provider: "openai", strategy_model: "gpt-5.1", content_provider: "" }));
-  assert.equal(routing.status, "success", routing.message);
-  assert.deepEqual(globalThis.__db.ai_task_models.map((t) => [t.task, t.provider, t.model]), [["strategy", "openai", "gpt-5.1"]]);
-  const badRouting = await saveTaskRoutingAction(idle, form({ strategy_provider: "claude", strategy_model: "gpt-5.1" }));
-  assert.match(badRouting.message, /strategy: "gpt-5.1" is not a Claude model/);
-
-  assert.equal((await saveFallbackAction(idle, form({}))).message, "Fallback OFF.");
-  assert.equal(globalThis.__db.ai_brain_settings[0].fallback_enabled, false);
-  const fb = await saveFallbackAction(idle, form({ fallback_enabled: "on", provider: "claude", model: "claude-opus-5" }));
-  assert.equal(fb.status, "success", fb.message);
   assert.deepEqual(
-    [globalThis.__db.ai_brain_settings[0].fallback_enabled, globalThis.__db.ai_brain_settings[0].fallback_provider],
-    [true, "claude"]
+    [globalThis.__db.ai_brain_settings[0].default_provider, globalThis.__db.ai_brain_settings[0].default_model],
+    ["openai", "gpt-5.1"]
+  );
+  stubFetch(() => openAIReply(OK_JSON));
+  assert.equal((await generate()).provider, "openai", "the saved selection is used for real requests");
+  assert.equal(await brainReadiness(), null);
+
+  assert.equal((await saveAiBrainAction(idle, form({ provider: "gemini", model: "gemini-3-pro" }))).status, "success");
+  assert.equal((await saveAiBrainAction(idle, form({ provider: "claude", model: "claude-opus-5" }))).status, "success");
+  assert.equal(globalThis.__db.ai_brain_settings.length, 1, "single global selection");
+  assert.equal(globalThis.__db.ai_brain_settings[0].default_provider, "claude");
+
+  assert.match((await saveAiBrainAction(idle, form({ provider: "gemini", model: "gpt-5.1" }))).message, /not a Google Gemini model/);
+  assert.match((await saveAiBrainAction(idle, form({ provider: "openai", model: "gpt-99-invented" }))).message, /not discovered/);
+  assert.match((await saveAiBrainAction(idle, form({ provider: "openai", model: "gpt-4.1" }))).message, /not currently available/);
+  assert.match((await saveAiBrainAction(idle, form({ provider: "fal", model: "x" }))).message, /valid AI provider/);
+  globalThis.__fakeStatuses = { openai: "not_connected" };
+  assert.match((await saveAiBrainAction(idle, form({ provider: "openai", model: "gpt-5.1" }))).message, /Connect OpenAI first/);
+  globalThis.__fakeStatuses = {};
+  assert.deepEqual(
+    [globalThis.__db.ai_brain_settings[0].default_provider, globalThis.__db.ai_brain_settings[0].default_model],
+    ["claude", "claude-opus-5"],
+    "rejected choices change nothing"
   );
 });
 
@@ -687,9 +635,7 @@ test("AI Brain settings: sub-admins are refused before anything is read or writt
   const actions = await import("@/lib/actions/ai-settings");
   const { saveApiKey, testApiKey, removeApiKey } = await import("@/lib/actions/integrations");
   const before = structuredClone(globalThis.__db);
-  await assert.rejects(actions.saveDefaultBrainAction(idle, form({ provider: "openai", model: "gpt-5.1" })), /access denied/);
-  await assert.rejects(actions.saveTaskRoutingAction(idle, form({})), /access denied/);
-  await assert.rejects(actions.saveFallbackAction(idle, form({ fallback_enabled: "on" })), /access denied/);
+  await assert.rejects(actions.saveAiBrainAction(idle, form({ provider: "openai", model: "gpt-5.1" })), /access denied/);
   await assert.rejects(actions.refreshModelsAction("openai"), /access denied/);
   await assert.rejects(saveApiKey("openai", idle, form({ api_key: OPENAI_KEY })), /access denied/);
   await assert.rejects(testApiKey("gemini"), /access denied/);
@@ -698,4 +644,34 @@ test("AI Brain settings: sub-admins are refused before anything is read or writt
   assert.deepEqual(globalThis.__storedSecrets, {});
   assert.equal(fetchCalls.length, 0);
   globalThis.__fakeRole = "admin";
+});
+
+test("readiness everywhere follows the selected AI Brain provider, not hard-coded Claude", async () => {
+  const { getAiProviderReadiness } = await import("@/lib/ai/usage");
+  // OpenAI selected + connected, Claude not connected: AI brain features (e.g. Creative Studio) are ready.
+  setBrain({ provider: "openai", model: "gpt-5.1" });
+  globalThis.__fakeStatuses = { claude: "not_connected", gemini: "not_connected" };
+  let r = await getAiProviderReadiness();
+  assert.deepEqual([r.brain, r.brainProvider, r.brainLabel, r.claude], ["ready", "openai", "OpenAI", "not_configured"]);
+  assert.equal(await brainReadiness(), null);
+
+  // Claude selected but not connected: not ready, even though OpenAI is connected.
+  setBrain({ provider: "claude", model: "claude-opus-5" });
+  r = await getAiProviderReadiness();
+  assert.deepEqual([r.brain, r.brainLabel], ["not_configured", "Claude"]);
+  assert.match(await brainReadiness(), /Connect Claude/);
+
+  // Provider selected without a model: explicit "select a model" message.
+  setBrain({ provider: "gemini" });
+  globalThis.__fakeStatuses = {};
+  r = await getAiProviderReadiness();
+  assert.equal(r.brain, "not_configured");
+  assert.match(r.brainDetail, /Select a Google Gemini model/);
+
+  // No page or workflow checks Claude directly for AI brain readiness.
+  for (const file of sourceFiles(path.join(ROOT, "src"))) {
+    const src = readFileSync(file, "utf8");
+    assert.ok(!/readiness\.claude\b/.test(src), `hard-coded Claude readiness in ${file}`);
+  }
+  assert.match(read("src/lib/workflows/creatives.ts"), /await brainReadiness\(\)/);
 });

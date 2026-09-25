@@ -1,5 +1,5 @@
 import { loadBrainConfig } from "@/lib/ai/brain";
-import { AI_PROVIDER_LABELS, type AIProviderId, type AITask } from "@/lib/ai/providers/common";
+import { AI_PROVIDER_LABELS, resolveRoute, type AIProviderId, type AITask } from "@/lib/ai/providers/common";
 import { getIntegration } from "@/lib/integrations/store";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -28,7 +28,6 @@ export interface GenerationLogEntry {
   actorId: string;
   task?: AITask | null;
   durationMs?: number | null;
-  fallbackUsed?: boolean;
 }
 
 // Usage tracking must never break a generation: failures are logged and swallowed.
@@ -44,7 +43,6 @@ export async function logGeneration(entry: GenerationLogEntry): Promise<void> {
     status: entry.status,
     task: entry.task ?? null,
     duration_ms: entry.durationMs ?? null,
-    fallback_used: entry.fallbackUsed ?? false,
     input_tokens: entry.inputTokens ?? null,
     output_tokens: entry.outputTokens ?? null,
     units: entry.units ?? null,
@@ -113,10 +111,12 @@ export interface AiReadiness {
   openai: ProviderReadiness;
   gemini: ProviderReadiness;
   fal: ProviderReadiness;
-  // The AI brain's default provider (used by pages to show "Connect <provider>").
+  // The globally selected AI brain provider (used by every page that needs the AI brain).
   brain: ProviderReadiness;
   brainProvider: AIProviderId;
   brainLabel: string;
+  // Set when no model is selected for that provider.
+  brainDetail?: string;
 }
 
 // A saved key (tested or not) is usable; a key that failed its last test is not.
@@ -131,12 +131,14 @@ export async function getAiProviderReadiness(): Promise<AiReadiness> {
   const state = (status: string): ProviderReadiness =>
     status === "connected" || status === "configured" ? "ready" : status === "error" ? "error" : "not_configured";
   const providers = { claude: state(claude.status), openai: state(openai.status), gemini: state(gemini.status) };
-  const brainProvider = config.defaultProvider;
+  const brainProvider = config.provider;
+  const route = resolveRoute(config);
   return {
     ...providers,
     fal: state(fal.status),
-    brain: providers[brainProvider],
+    brain: route.ok ? providers[brainProvider] : "not_configured",
     brainProvider,
     brainLabel: AI_PROVIDER_LABELS[brainProvider],
+    ...(route.ok ? {} : { brainDetail: route.error }),
   };
 }

@@ -63,7 +63,7 @@ export default async function ContentCalendarPage({ params, searchParams }: Page
         </p>
       </div>
 
-      <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} isSuperAdmin={profile.role === "admin"} />
+      <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} detail={readiness.brainDetail} isSuperAdmin={profile.role === "admin"} />
 
       <Card>
         <CardHeader>

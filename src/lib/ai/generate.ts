@@ -5,8 +5,8 @@ import { AiContextError } from "@/lib/ai/context";
 import { IntegrationError } from "@/lib/integrations/types";
 import { logEvent } from "@/lib/observability";
 
-// Server-only: per-client rate limit + structured generation on the provider/model the
-// Super Admin configured for this task (AI brain) + usage log for every attempt.
+// Server-only: per-client rate limit + structured generation on the AI brain provider/model
+// the Super Admin selected (one for all tasks) + usage log for every call.
 // Every AI feature goes through here, so context/prompts are identical for all providers.
 export async function generateAndLog<T>(options: {
   clientId: string;
@@ -25,7 +25,7 @@ export async function generateAndLog<T>(options: {
   if (!task) throw new IntegrationError("This generation type is not routed to an AI provider.");
   await enforceAiRateLimit(options.clientId);
 
-  const result = await brainStructured(task, options, async (attempt) => {
+  const result = await brainStructured(options, async (attempt) => {
     const usage = attempt.usage;
     const model = usage?.model ?? attempt.ref.model;
     await logGeneration({
@@ -41,7 +41,6 @@ export async function generateAndLog<T>(options: {
       outputTokens: usage?.outputTokens,
       estimatedCostUsd: usage ? estimateCostUsd(attempt.ref.provider, usage.model, usage.inputTokens, usage.outputTokens) : null,
       durationMs: attempt.durationMs,
-      fallbackUsed: attempt.fallback,
       actorId: options.actorId,
     });
     logEvent(attempt.ok ? "info" : "warn", {
@@ -49,7 +48,7 @@ export async function generateAndLog<T>(options: {
       operation: options.generationType,
       clientId: options.clientId,
       userId: options.actorId,
-      status: attempt.ok ? (attempt.fallback ? "succeeded_fallback" : "succeeded") : "failed",
+      status: attempt.ok ? "succeeded" : "failed",
       durationMs: attempt.durationMs,
       error: attempt.ok ? undefined : attempt.error instanceof Error ? attempt.error.message : "unknown",
     });

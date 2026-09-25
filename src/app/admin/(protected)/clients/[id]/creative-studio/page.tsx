@@ -82,7 +82,7 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
         </p>
       </div>
 
-      <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} isSuperAdmin={isSuperAdmin} />
+      <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} detail={readiness.brainDetail} isSuperAdmin={isSuperAdmin} />
       <ProviderBanner provider="Fal.ai" state={readiness.fal} isSuperAdmin={isSuperAdmin} />
       <GeneratingPoller clientId={client.id} count={allGenerating.length} />
 

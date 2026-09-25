@@ -2,9 +2,9 @@ import type { ModelRequest, ModelResponse } from "@/lib/agent/runner";
 import { brainAgentTurn } from "@/lib/ai/brain";
 import type { AIProviderId } from "@/lib/ai/providers/common";
 
-// Server-only: one agent turn on the provider/model the Super Admin configured for the
-// "Campaign Intelligence" task (Claude by default). Tools, limits and the loop itself are
-// unchanged (lib/agent/runner.ts); only the model call is routed.
+// Server-only: one agent turn on the globally selected AI Brain provider/model (Claude by
+// default). Tools, limits and the loop itself are unchanged (lib/agent/runner.ts); only the
+// model call is routed.
 export function createAgentModelCaller() {
   let provider: AIProviderId | null = null;
   return {

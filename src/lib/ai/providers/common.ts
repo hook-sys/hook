@@ -1,4 +1,4 @@
-// Pure, provider-neutral core of the AI brain: registry, task routing, fallback policy,
+// Pure, provider-neutral core of the AI brain: registry, global provider/model routing,
 // normalized results and cost estimates. No network, no secrets — unit-testable.
 
 export const AI_PROVIDERS = ["claude", "openai", "gemini"] as const;
@@ -28,19 +28,12 @@ export const LEGACY_CLAUDE_MODEL = "claude-opus-5";
 export const AI_TASKS = ["strategy", "content", "campaign_intelligence", "analytics_report", "creative_brief"] as const;
 export type AITask = (typeof AI_TASKS)[number];
 
-export const AI_TASK_LABELS: Record<AITask, { label: string; description: string }> = {
-  strategy: { label: "Strategy", description: "Campaign strategy drafts" },
-  content: { label: "Content / Copy", description: "Content calendar and item regeneration" },
-  campaign_intelligence: { label: "Campaign Intelligence", description: "AI Marketing Agent" },
-  analytics_report: { label: "Analytics Report", description: "AI marketing reports" },
-  creative_brief: { label: "Creative Brief", description: "Creative briefs for Fal.ai generation" },
-};
-
 export function isAITask(value: unknown): value is AITask {
   return typeof value === "string" && (AI_TASKS as readonly string[]).includes(value);
 }
 
-// Existing usage-log generation types -> routing task.
+// Existing generation types -> task label recorded in the usage log (all tasks use the
+// same globally selected provider/model).
 const GENERATION_TASK: Record<string, AITask> = {
   campaign_strategy: "strategy",
   content_calendar: "content",
@@ -63,44 +56,22 @@ export interface ModelRef {
   model: string;
 }
 
+// ONE globally selected provider + model serves every AI brain task. Other connected
+// providers are never called. There is no automatic switching between providers.
 export interface BrainConfig {
-  defaultProvider: AIProviderId;
-  providerDefaults: Partial<Record<AIProviderId, string | null>>;
-  tasks: Partial<Record<AITask, ModelRef & { enabled: boolean }>>;
-  fallback: { enabled: boolean; provider: AIProviderId | null; model: string | null };
+  provider: AIProviderId;
+  model: string | null;
 }
 
-export const EMPTY_BRAIN_CONFIG: BrainConfig = {
-  defaultProvider: "claude",
-  providerDefaults: {},
-  tasks: {},
-  fallback: { enabled: false, provider: null, model: null },
-};
+export const EMPTY_BRAIN_CONFIG: BrainConfig = { provider: "claude", model: null };
 
-export type RouteResult = { ok: true; primary: ModelRef; fallback: ModelRef | null } | { ok: false; error: string };
+export type RouteResult = { ok: true; primary: ModelRef } | { ok: false; error: string };
 
-// Task-specific model if configured and enabled; otherwise the default provider + its
-// default model. Fallback is used only when explicitly enabled and it differs from primary.
-export function resolveRoute(config: BrainConfig, task: AITask): RouteResult {
-  const taskRoute = config.tasks[task];
-  let primary: ModelRef | null = null;
-  if (taskRoute?.enabled) {
-    primary = { provider: taskRoute.provider, model: taskRoute.model };
-  } else {
-    const provider = config.defaultProvider;
-    const model = config.providerDefaults[provider] ?? (provider === "claude" ? LEGACY_CLAUDE_MODEL : null);
-    if (!model) {
-      return { ok: false, error: `Select a default ${AI_PROVIDER_LABELS[provider]} model in Settings → AI Brain.` };
-    }
-    primary = { provider, model };
-  }
-
-  const fb = config.fallback;
-  const fallback =
-    fb.enabled && fb.provider && fb.model && !(fb.provider === primary.provider && fb.model === primary.model)
-      ? { provider: fb.provider, model: fb.model }
-      : null;
-  return { ok: true, primary, fallback };
+// Nothing configured keeps the pre-existing behavior (Claude + its legacy default model).
+export function resolveRoute(config: BrainConfig): RouteResult {
+  const model = config.model ?? (config.provider === "claude" ? LEGACY_CLAUDE_MODEL : null);
+  if (!model) return { ok: false, error: `Select a ${AI_PROVIDER_LABELS[config.provider]} model in Settings → AI Brain.` };
+  return { ok: true, primary: { provider: config.provider, model } };
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +103,7 @@ export interface UsageInfo {
 }
 
 // Admin-safe error. `retryable` marks temporary provider failures (rate limit, timeout,
-// 5xx/overloaded) — the only failures that may trigger the optional fallback.
+// 5xx/overloaded).
 export class AIGenerationError extends Error {
   constructor(
     message: string,
