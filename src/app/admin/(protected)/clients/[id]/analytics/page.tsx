@@ -79,7 +79,7 @@ export default async function AnalyticsPage({ params, searchParams }: PageProps<
   const prev = snap?.previous?.account;
   const cur = snap?.currency ?? null;
   const statusById = new Map(snap?.campaignInfo.map((c) => [c.id, c]) ?? []);
-  const canReport = readiness.claude === "ready" && !!data;
+  const canReport = readiness.brain === "ready" && !!data;
 
   return (
     <div className="space-y-6">
@@ -248,7 +248,7 @@ export default async function AnalyticsPage({ params, searchParams }: PageProps<
           <CardTitle>AI Marketing Reports</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 py-6">
-          <ProviderBanner provider="Claude" state={readiness.claude} isSuperAdmin={isSuperAdmin} />
+          <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} isSuperAdmin={isSuperAdmin} />
           {canReport ? (
             <ActionButton
               action={generateReportAction.bind(null, client.id)}
@@ -258,7 +258,7 @@ export default async function AnalyticsPage({ params, searchParams }: PageProps<
               variant="primary"
             />
           ) : (
-            readiness.claude === "ready" && <p className="text-sm text-slate-500">Reports need Meta data for the selected range.</p>
+            readiness.brain === "ready" && <p className="text-sm text-slate-500">Reports need Meta data for the selected range.</p>
           )}
 
           {reports.length > 0 && (

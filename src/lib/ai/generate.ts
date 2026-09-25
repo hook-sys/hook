@@ -1,17 +1,13 @@
-import {
-  CLAUDE_MODEL,
-  ClaudeGenerationError,
-  estimateClaudeCostUsd,
-  generateStructured,
-  type StructuredResult,
-} from "@/lib/ai/claude-json";
-import { AiRateLimitError, enforceAiRateLimit, getAiProviderReadiness, logGeneration, type GenerationLogEntry } from "@/lib/ai/usage";
+import { brainStructured } from "@/lib/ai/brain";
+import { AIGenerationError, AI_PROVIDER_LABELS, LOG_PROVIDER, estimateCostUsd, taskForGeneration, type AIProviderId, type StructuredResult } from "@/lib/ai/providers/common";
+import { AiRateLimitError, enforceAiRateLimit, logGeneration, type GenerationLogEntry } from "@/lib/ai/usage";
 import { AiContextError } from "@/lib/ai/context";
 import { IntegrationError } from "@/lib/integrations/types";
 import { logEvent } from "@/lib/observability";
 
-// Server-only: readiness check + per-client rate limit + structured Claude call + usage log.
-// Every Claude feature added after Phase 9 goes through here.
+// Server-only: per-client rate limit + structured generation on the provider/model the
+// Super Admin configured for this task (AI brain) + usage log for every attempt.
+// Every AI feature goes through here, so context/prompts are identical for all providers.
 export async function generateAndLog<T>(options: {
   clientId: string;
   actorId: string;
@@ -24,61 +20,48 @@ export async function generateAndLog<T>(options: {
   maxTokens: number;
   timeoutMs?: number;
   validate: (value: unknown) => { ok: true; value: T } | { ok: false; error: string };
-}): Promise<StructuredResult<T>> {
-  const readiness = await getAiProviderReadiness();
-  if (readiness.claude !== "ready") throw new IntegrationError("Connect Claude in Settings → Integrations first.");
+}): Promise<StructuredResult<T> & { provider: AIProviderId }> {
+  const task = taskForGeneration(options.generationType);
+  if (!task) throw new IntegrationError("This generation type is not routed to an AI provider.");
   await enforceAiRateLimit(options.clientId);
 
-  const started = Date.now();
-  const base = {
-    clientId: options.clientId,
-    productId: options.productId ?? null,
-    campaignId: options.campaignId ?? null,
-    provider: "anthropic" as const,
-    generationType: options.generationType,
-    actorId: options.actorId,
-  };
-
-  try {
-    const result = await generateStructured(options);
+  const result = await brainStructured(task, options, async (attempt) => {
+    const usage = attempt.usage;
+    const model = usage?.model ?? attempt.ref.model;
     await logGeneration({
-      ...base,
-      model: result.model,
-      status: "succeeded",
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      estimatedCostUsd: estimateClaudeCostUsd(result.model, result.inputTokens, result.outputTokens),
-    });
-    logEvent("info", { provider: "anthropic", operation: options.generationType, clientId: options.clientId, userId: options.actorId, status: "succeeded", durationMs: Date.now() - started });
-    return result;
-  } catch (error) {
-    const usage = error instanceof ClaudeGenerationError ? error.usage : null;
-    await logGeneration({
-      ...base,
-      model: usage?.model ?? CLAUDE_MODEL,
-      status: "failed",
+      clientId: options.clientId,
+      productId: options.productId ?? null,
+      campaignId: options.campaignId ?? null,
+      provider: LOG_PROVIDER[attempt.ref.provider],
+      model,
+      generationType: options.generationType,
+      task,
+      status: attempt.ok ? "succeeded" : "failed",
       inputTokens: usage?.inputTokens,
       outputTokens: usage?.outputTokens,
-      estimatedCostUsd: usage ? estimateClaudeCostUsd(usage.model, usage.inputTokens, usage.outputTokens) : null,
+      estimatedCostUsd: usage ? estimateCostUsd(attempt.ref.provider, usage.model, usage.inputTokens, usage.outputTokens) : null,
+      durationMs: attempt.durationMs,
+      fallbackUsed: attempt.fallback,
+      actorId: options.actorId,
     });
-    logEvent("warn", {
-      provider: "anthropic",
+    logEvent(attempt.ok ? "info" : "warn", {
+      provider: attempt.ref.provider,
       operation: options.generationType,
       clientId: options.clientId,
       userId: options.actorId,
-      status: "failed",
-      durationMs: Date.now() - started,
-      error: error instanceof Error ? error.message : "unknown",
+      status: attempt.ok ? (attempt.fallback ? "succeeded_fallback" : "succeeded") : "failed",
+      durationMs: attempt.durationMs,
+      error: attempt.ok ? undefined : attempt.error instanceof Error ? attempt.error.message : "unknown",
     });
-    throw error;
-  }
+  });
+  return { data: result.data, model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, provider: result.provider };
 }
 
 // Admin-safe message for anything thrown by the AI pipeline.
 export function aiErrorMessage(error: unknown, fallback: string): string {
   if (
     error instanceof IntegrationError ||
-    error instanceof ClaudeGenerationError ||
+    error instanceof AIGenerationError ||
     error instanceof AiContextError ||
     error instanceof AiRateLimitError
   ) {
@@ -87,3 +70,5 @@ export function aiErrorMessage(error: unknown, fallback: string): string {
   logEvent("error", { operation: "ai", status: "error", error: error instanceof Error ? error.message : "unknown" });
   return fallback;
 }
+
+export { AI_PROVIDER_LABELS };

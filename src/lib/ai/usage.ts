@@ -1,3 +1,5 @@
+import { loadBrainConfig } from "@/lib/ai/brain";
+import { AI_PROVIDER_LABELS, type AIProviderId, type AITask } from "@/lib/ai/providers/common";
 import { getIntegration } from "@/lib/integrations/store";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -7,7 +9,7 @@ export interface GenerationLogEntry {
   productId: string | null;
   creativeId?: string | null;
   campaignId?: string | null;
-  provider: "anthropic" | "fal";
+  provider: "anthropic" | "openai" | "gemini" | "fal";
   model: string;
   generationType:
     | "creative_brief"
@@ -24,6 +26,9 @@ export interface GenerationLogEntry {
   units?: number | null;
   estimatedCostUsd?: number | null;
   actorId: string;
+  task?: AITask | null;
+  durationMs?: number | null;
+  fallbackUsed?: boolean;
 }
 
 // Usage tracking must never break a generation: failures are logged and swallowed.
@@ -37,6 +42,9 @@ export async function logGeneration(entry: GenerationLogEntry): Promise<void> {
     model: entry.model,
     generation_type: entry.generationType,
     status: entry.status,
+    task: entry.task ?? null,
+    duration_ms: entry.durationMs ?? null,
+    fallback_used: entry.fallbackUsed ?? false,
     input_tokens: entry.inputTokens ?? null,
     output_tokens: entry.outputTokens ?? null,
     units: entry.units ?? null,
@@ -67,6 +75,8 @@ export async function enforceAiRateLimit(clientId: string): Promise<void> {
 
 export interface UsageSummary {
   anthropic: { calls: number; costUsd: number };
+  openai: { calls: number; costUsd: number };
+  gemini: { calls: number; costUsd: number };
   fal: { calls: number; costUsd: number };
 }
 
@@ -81,7 +91,12 @@ export async function getClientUsageSummary(clientId: string, sinceDays = 30): P
     .gte("created_at", since)
     .limit(5000);
 
-  const summary: UsageSummary = { anthropic: { calls: 0, costUsd: 0 }, fal: { calls: 0, costUsd: 0 } };
+  const summary: UsageSummary = {
+    anthropic: { calls: 0, costUsd: 0 },
+    openai: { calls: 0, costUsd: 0 },
+    gemini: { calls: 0, costUsd: 0 },
+    fal: { calls: 0, costUsd: 0 },
+  };
   for (const row of data ?? []) {
     const bucket = summary[row.provider as keyof UsageSummary];
     if (!bucket) continue;
@@ -93,10 +108,35 @@ export async function getClientUsageSummary(clientId: string, sinceDays = 30): P
 
 export type ProviderReadiness = "ready" | "not_configured" | "error";
 
+export interface AiReadiness {
+  claude: ProviderReadiness;
+  openai: ProviderReadiness;
+  gemini: ProviderReadiness;
+  fal: ProviderReadiness;
+  // The AI brain's default provider (used by pages to show "Connect <provider>").
+  brain: ProviderReadiness;
+  brainProvider: AIProviderId;
+  brainLabel: string;
+}
+
 // A saved key (tested or not) is usable; a key that failed its last test is not.
-export async function getAiProviderReadiness(): Promise<{ claude: ProviderReadiness; fal: ProviderReadiness }> {
-  const [claude, fal] = await Promise.all([getIntegration("claude"), getIntegration("fal")]);
+export async function getAiProviderReadiness(): Promise<AiReadiness> {
+  const [claude, openai, gemini, fal, config] = await Promise.all([
+    getIntegration("claude"),
+    getIntegration("openai"),
+    getIntegration("gemini"),
+    getIntegration("fal"),
+    loadBrainConfig(),
+  ]);
   const state = (status: string): ProviderReadiness =>
     status === "connected" || status === "configured" ? "ready" : status === "error" ? "error" : "not_configured";
-  return { claude: state(claude.status), fal: state(fal.status) };
+  const providers = { claude: state(claude.status), openai: state(openai.status), gemini: state(gemini.status) };
+  const brainProvider = config.defaultProvider;
+  return {
+    ...providers,
+    fal: state(fal.status),
+    brain: providers[brainProvider],
+    brainProvider,
+    brainLabel: AI_PROVIDER_LABELS[brainProvider],
+  };
 }

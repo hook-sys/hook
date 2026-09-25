@@ -2,3 +2,6 @@
 export async function getClaudeClient() {
   return globalThis.__fakeClaude;
 }
+export async function testClaudeApiKey() {
+  return { ok: true, message: "Connected to the Anthropic API." };
+}

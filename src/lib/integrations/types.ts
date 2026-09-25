@@ -2,6 +2,8 @@ export const INTEGRATION_PROVIDERS = [
   "google_drive",
   "meta",
   "claude",
+  "openai",
+  "gemini",
   "fal",
   "inworld",
   "tiktok",
@@ -10,7 +12,7 @@ export const INTEGRATION_PROVIDERS = [
 
 export type IntegrationProvider = (typeof INTEGRATION_PROVIDERS)[number];
 
-export type ApiKeyProvider = Extract<IntegrationProvider, "claude" | "fal">;
+export type ApiKeyProvider = Extract<IntegrationProvider, "claude" | "openai" | "gemini" | "fal">;
 
 export type IntegrationStatus = "not_connected" | "configured" | "connected" | "error";
 

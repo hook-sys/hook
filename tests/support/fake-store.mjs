@@ -4,12 +4,16 @@ export async function getIntegrationSecret(provider) {
   const s = globalThis.__fakeSecrets?.[provider];
   return s ?? globalThis.__fakeSecret ?? null;
 }
-export async function setIntegrationSecret() {}
+export async function setIntegrationSecret(provider, secret) {
+  (globalThis.__storedSecrets ??= {})[provider] = secret;
+}
 export async function getIntegration(provider) {
-  return { provider, status: "connected", config: {}, connected_at: null, updated_at: null };
+  const status = globalThis.__fakeStatuses?.[provider] ?? "connected";
+  return { provider, status, config: {}, connected_at: null, updated_at: null };
 }
 export async function saveIntegration(provider, values) {
   saved.push([provider, values.status]);
+  (globalThis.__savedIntegrations ??= []).push([provider, values]);
 }
 export async function clearIntegration() {}
 export async function listIntegrations() {

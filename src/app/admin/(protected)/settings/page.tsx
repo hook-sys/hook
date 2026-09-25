@@ -13,7 +13,19 @@ export default async function AdminSettingsPage() {
             <CardContent className="py-5">
               <p className="font-semibold text-slate-900">Integrations</p>
               <p className="mt-1 text-sm text-slate-500">
-                Google Drive, Meta, Claude, Fal.ai and upcoming platforms.
+                Google Drive, Meta, Claude, OpenAI, Gemini, Fal.ai and upcoming platforms.
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
+      {profile.role === "admin" && (
+        <Link href="/admin/settings/ai" className="block">
+          <Card className="transition-colors hover:border-brand-blue">
+            <CardContent className="py-5">
+              <p className="font-semibold text-slate-900">AI Brain</p>
+              <p className="mt-1 text-sm text-slate-500">
+                Default AI provider and model, task-specific models and optional fallback.
               </p>
             </CardContent>
           </Card>

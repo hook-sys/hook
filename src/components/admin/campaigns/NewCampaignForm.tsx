@@ -45,13 +45,13 @@ export function NewCampaignForm({
       <fieldset className="flex flex-wrap gap-4 text-sm text-slate-700">
         <label className="flex items-center gap-2">
           <input type="radio" name="mode" value="ai" checked={mode === "ai"} disabled={!claudeReady} onChange={() => setMode("ai")} />
-          AI strategy (Claude)
+          AI strategy
         </label>
         <label className="flex items-center gap-2">
           <input type="radio" name="mode" value="blank" checked={mode === "blank"} onChange={() => setMode("blank")} />
           Blank draft
         </label>
-        {!claudeReady && <span className="text-xs text-amber-700">Connect Claude to generate strategies.</span>}
+        {!claudeReady && <span className="text-xs text-amber-700">Connect the AI provider to generate strategies.</span>}
       </fieldset>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -78,7 +78,7 @@ export function NewCampaignForm({
         <div>
           <Label htmlFor="objective">Objective</Label>
           <Select id="objective" name="objective" value={objective} onChange={(e) => setObjective(e.target.value)}>
-            <option value="">{mode === "ai" ? "Let Claude choose" : "Select an objective"}</option>
+            <option value="">{mode === "ai" ? "Let the AI choose" : "Select an objective"}</option>
             {META_OBJECTIVES.map((o) => (
               <option key={o} value={o}>
                 {META_OBJECTIVE_LABELS[o]}
@@ -94,7 +94,7 @@ export function NewCampaignForm({
         )}
         {mode === "ai" && (
           <div className="sm:col-span-2">
-            <Label htmlFor="notes">Notes for Claude (optional)</Label>
+            <Label htmlFor="notes">Notes for the AI (optional)</Label>
             <Textarea id="notes" name="notes" maxLength={1000} rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </div>
         )}

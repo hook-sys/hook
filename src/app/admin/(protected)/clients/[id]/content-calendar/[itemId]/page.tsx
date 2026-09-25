@@ -121,7 +121,7 @@ export default async function CalendarItemPage({ params }: PageProps<"/admin/cli
                 <CardTitle>Regenerate with AI</CardTitle>
               </CardHeader>
               <CardContent className="py-6">
-                {readiness.claude === "ready" ? (
+                {readiness.brain === "ready" ? (
                   <InlineActionForm
                     action={regenerateCalendarItemAction.bind(null, client.id, item.id)}
                     name="instructions"
@@ -132,7 +132,7 @@ export default async function CalendarItemPage({ params }: PageProps<"/admin/cli
                     multiline
                   />
                 ) : (
-                  <p className="text-sm text-amber-700">Connect Claude to regenerate items.</p>
+                  <p className="text-sm text-amber-700">Connect {readiness.brainLabel} to regenerate items.</p>
                 )}
               </CardContent>
             </Card>

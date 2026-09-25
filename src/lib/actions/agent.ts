@@ -1,12 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { callAgentModel } from "@/lib/agent/model";
+import { createAgentModelCaller } from "@/lib/agent/model";
 import { AGENT_LIMITS, type AgentOptions } from "@/lib/agent/policy";
 import { runAgentLoop } from "@/lib/agent/runner";
 import { createToolExecutor } from "@/lib/agent/tools";
-import { estimateClaudeCostUsd } from "@/lib/ai/claude-json";
-import { enforceAiRateLimit, getAiProviderReadiness, logGeneration } from "@/lib/ai/usage";
+import { providerReady, routeForTask } from "@/lib/ai/brain";
+import { AI_PROVIDER_LABELS, LOG_PROVIDER, estimateCostUsd } from "@/lib/ai/providers/common";
+import { IntegrationError } from "@/lib/integrations/types";
+import { enforceAiRateLimit, logGeneration } from "@/lib/ai/usage";
 import { requirePermission } from "@/lib/auth/session";
 import { logEvent } from "@/lib/observability";
 import { getClientById } from "@/lib/services/clients";
@@ -26,7 +28,15 @@ export async function runAgentAction(clientId: string, _prev: AgentActionState, 
   const request = String(formData.get("request") ?? "").trim();
   if (!request) return { status: "error", message: "Describe what you want the agent to do." };
   if (request.length > AGENT_LIMITS.maxRequestChars) return { status: "error", message: `Keep the request under ${AGENT_LIMITS.maxRequestChars} characters.` };
-  if ((await getAiProviderReadiness()).claude !== "ready") return { status: "error", message: "Connect Claude in Settings → Integrations first." };
+  // The agent runs on the provider/model configured for "Campaign Intelligence".
+  try {
+    const { primary } = await routeForTask("campaign_intelligence");
+    if (!(await providerReady(primary.provider))) {
+      return { status: "error", message: `Connect ${AI_PROVIDER_LABELS[primary.provider]} in Settings → Integrations first.` };
+    }
+  } catch (error) {
+    return { status: "error", message: error instanceof IntegrationError ? error.message : "The AI brain is not configured." };
+  }
 
   const options: AgentOptions = {
     allowPaidGeneration: formData.get("allow_paid_generation") === "on",
@@ -52,17 +62,20 @@ export async function runAgentAction(clientId: string, _prev: AgentActionState, 
     .single();
   if (error || !run) return { status: "error", message: "Could not start the agent run." };
 
+  const model = createAgentModelCaller();
+  const started = Date.now();
   const outcome = await runAgentLoop({
     request,
     role: profile.role,
     permissions: profile.permissions,
     options,
-    callModel: callAgentModel,
+    callModel: model.callModel,
     executeTool: createToolExecutor(profile, client.id),
     beforeTurn: () => enforceAiRateLimit(client.id),
   });
 
-  const cost = outcome.model ? estimateClaudeCostUsd(outcome.model, outcome.inputTokens, outcome.outputTokens) : null;
+  const provider = model.provider;
+  const cost = outcome.model && provider ? estimateCostUsd(provider, outcome.model, outcome.inputTokens, outcome.outputTokens) : null;
   await admin
     .from("agent_runs")
     .update({
@@ -78,11 +91,13 @@ export async function runAgentAction(clientId: string, _prev: AgentActionState, 
       finished_at: new Date().toISOString(),
     })
     .eq("id", run.id);
-  if (outcome.model) {
+  if (outcome.model && provider) {
     await logGeneration({
       clientId: client.id,
       productId: null,
-      provider: "anthropic",
+      provider: LOG_PROVIDER[provider],
+      task: "campaign_intelligence",
+      durationMs: Date.now() - started,
       model: outcome.model,
       generationType: "agent",
       status: outcome.status === "failed" ? "failed" : "succeeded",
@@ -93,7 +108,7 @@ export async function runAgentAction(clientId: string, _prev: AgentActionState, 
     });
   }
   logEvent(outcome.status === "failed" ? "warn" : "info", {
-    provider: "anthropic",
+    provider: provider ?? "unknown",
     operation: "agent_run",
     clientId: client.id,
     userId: profile.id,

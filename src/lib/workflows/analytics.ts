@@ -1,4 +1,4 @@
-import { estimateClaudeCostUsd } from "@/lib/ai/claude-json";
+import { estimateCostUsd } from "@/lib/ai/providers/common";
 import { generateAndLog } from "@/lib/ai/generate";
 import {
   MARKETING_REPORT_SCHEMA,
@@ -86,7 +86,7 @@ export async function generateMarketingReport(
       model: result.model,
       input_tokens: result.inputTokens,
       output_tokens: result.outputTokens,
-      estimated_cost_usd: estimateClaudeCostUsd(result.model, result.inputTokens, result.outputTokens),
+      estimated_cost_usd: estimateCostUsd(result.provider, result.model, result.inputTokens, result.outputTokens),
       created_by: profile.id,
     })
     .select("id")

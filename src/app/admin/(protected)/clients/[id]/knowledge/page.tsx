@@ -90,7 +90,7 @@ export default async function ClientKnowledgePage({ params, searchParams }: Page
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-slate-500">
-              The structured context the AI context builder produces for this client. Nothing is sent to Claude or
+              The structured context the AI context builder produces for this client. Nothing is sent to any AI provider or
               Fal.ai — this is a read-only preview.
             </p>
             <form method="get" className="flex flex-col gap-3 sm:flex-row sm:items-end">

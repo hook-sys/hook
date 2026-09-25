@@ -78,11 +78,11 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
         </Link>
         <h1 className="mt-1 text-2xl font-bold text-slate-900">Creative Studio</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Claude writes the creative brief from this client&apos;s AI context; Fal.ai generates the image or video.
+          The AI brain writes the creative brief from this client&apos;s AI context; Fal.ai generates the image or video.
         </p>
       </div>
 
-      <ProviderBanner provider="Claude" state={readiness.claude} isSuperAdmin={isSuperAdmin} />
+      <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} isSuperAdmin={isSuperAdmin} />
       <ProviderBanner provider="Fal.ai" state={readiness.fal} isSuperAdmin={isSuperAdmin} />
       <GeneratingPoller clientId={client.id} count={allGenerating.length} />
 
@@ -96,7 +96,7 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
               products={generatorProducts}
               generateAction={generateCreative.bind(null, client.id)}
               previewAction={isSuperAdmin ? previewCreativeRequest.bind(null, client.id) : undefined}
-              canGenerate={readiness.claude === "ready" && readiness.fal === "ready"}
+              canGenerate={readiness.brain === "ready" && readiness.fal === "ready"}
             />
           </CardContent>
         </Card>
@@ -110,6 +110,16 @@ export default async function CreativeStudioPage({ params, searchParams }: PageP
               <p>
                 Claude: {usage.anthropic.calls} call{usage.anthropic.calls === 1 ? "" : "s"} · ~${usage.anthropic.costUsd.toFixed(2)}
               </p>
+              {usage.openai.calls > 0 && (
+                <p>
+                  OpenAI: {usage.openai.calls} call{usage.openai.calls === 1 ? "" : "s"} · cost N/A
+                </p>
+              )}
+              {usage.gemini.calls > 0 && (
+                <p>
+                  Gemini: {usage.gemini.calls} call{usage.gemini.calls === 1 ? "" : "s"} · cost N/A
+                </p>
+              )}
               <p>
                 Fal.ai: {usage.fal.calls} job{usage.fal.calls === 1 ? "" : "s"} · ~${usage.fal.costUsd.toFixed(2)}
               </p>

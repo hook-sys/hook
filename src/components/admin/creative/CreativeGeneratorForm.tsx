@@ -179,7 +179,7 @@ export function CreativeGeneratorForm({
       )}
       {previewState.preview && (
         <details open className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs">
-          <summary className="cursor-pointer font-medium text-slate-700">Claude request (not sent)</summary>
+          <summary className="cursor-pointer font-medium text-slate-700">AI request (not sent)</summary>
           <p className="mt-2 font-semibold text-slate-600">System</p>
           <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap text-slate-700">{previewState.preview.system}</pre>
           <p className="mt-3 font-semibold text-slate-600">User</p>

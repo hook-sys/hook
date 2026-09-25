@@ -36,7 +36,7 @@ export default async function AiAgentPage({ params }: PageProps<"/admin/clients/
         </p>
       </div>
 
-      <ProviderBanner provider="Claude" state={readiness.claude} isSuperAdmin={isSuperAdmin} />
+      <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} isSuperAdmin={isSuperAdmin} />
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
@@ -44,7 +44,7 @@ export default async function AiAgentPage({ params }: PageProps<"/admin/clients/
             <CardTitle>New Request</CardTitle>
           </CardHeader>
           <CardContent className="py-6">
-            <AgentRequestForm action={runAgentAction.bind(null, client.id)} isSuperAdmin={isSuperAdmin} disabled={readiness.claude !== "ready"} />
+            <AgentRequestForm action={runAgentAction.bind(null, client.id)} isSuperAdmin={isSuperAdmin} disabled={readiness.brain !== "ready"} />
           </CardContent>
         </Card>
         <Card>

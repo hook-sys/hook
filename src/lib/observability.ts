@@ -15,6 +15,8 @@ export interface LogFields {
 
 const SECRET_PATTERNS = [
   /sk-ant-[A-Za-z0-9_-]+/g,
+  /\bsk-[A-Za-z0-9_-]{20,}/g, // OpenAI keys
+  /\bAIza[0-9A-Za-z_-]{30,}/g, // Google API keys (Gemini)
   /\b(?:EAA|EAAB)[A-Za-z0-9]{20,}\b/g, // Meta tokens
   /\bya29\.[A-Za-z0-9._-]+/g, // Google access tokens
   /\b1\/\/[A-Za-z0-9_-]{20,}/g, // Google refresh tokens

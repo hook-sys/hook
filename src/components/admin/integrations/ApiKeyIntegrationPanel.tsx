@@ -21,12 +21,15 @@ export function ApiKeyIntegrationPanel({
   keyHint,
   lastTested,
   lastError,
+  connectOnSave = false,
 }: {
   provider: ApiKeyProvider;
   label: string;
   keyHint: string | null;
   lastTested: string | null;
   lastError: string | null;
+  // Verify the key with the provider before storing it (OpenAI / Gemini).
+  connectOnSave?: boolean;
 }) {
   // Replace mode is tied to the key being replaced, so it closes once a new key is saved
   // (the masked hint changes) but stays open if the save fails.
@@ -67,13 +70,16 @@ export function ApiKeyIntegrationPanel({
               placeholder="Paste API key"
             />
             <Button type="submit" size="md" disabled={saving}>
-              {saving ? "Saving..." : "Save"}
+              {connectOnSave ? (saving ? "Connecting..." : "Connect") : saving ? "Saving..." : "Save"}
             </Button>
           </div>
-          <p className="text-xs text-slate-400">Stored encrypted on the server. It is never shown again after saving.</p>
+          <p className="text-xs text-slate-400">
+            {connectOnSave ? "Verified with the provider, then stored encrypted on the server. " : "Stored encrypted on the server. "}
+            It is never shown again after saving.
+          </p>
         </form>
       )}
-      {saveState.message && (saveState.status === "error" || !lastTested) && (
+      {saveState.message && (saveState.status === "error" || !lastTested || connectOnSave) && (
         <p className={saveState.status === "error" ? "text-sm text-red-600" : "text-sm text-emerald-600"}>
           {saveState.message}
         </p>

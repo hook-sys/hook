@@ -7,6 +7,7 @@ import {
   type CreativeBriefRequest,
 } from "@/lib/ai/creative-brief";
 import { aiErrorMessage, generateAndLog } from "@/lib/ai/generate";
+import { taskReadiness } from "@/lib/ai/brain";
 import { enforceAiRateLimit, getAiProviderReadiness, logGeneration } from "@/lib/ai/usage";
 import { checkFalCapabilities, falBillingUnits, falModelFor, planFalJob } from "@/lib/creative/fal-models";
 import {
@@ -149,7 +150,8 @@ export async function startCreativeGeneration(
   if (capabilityError) return { ok: false, message: capabilityError };
 
   const readiness = await getAiProviderReadiness();
-  if (readiness.claude !== "ready") return { ok: false, message: "Connect Claude in Settings → Integrations first." };
+  const brainIssue = await taskReadiness("creative_brief");
+  if (brainIssue) return { ok: false, message: brainIssue };
   if (readiness.fal !== "ready") return { ok: false, message: "Connect Fal.ai in Settings → Integrations first." };
 
   let brief: CreativeBrief;

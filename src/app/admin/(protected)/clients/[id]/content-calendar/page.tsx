@@ -63,7 +63,7 @@ export default async function ContentCalendarPage({ params, searchParams }: Page
         </p>
       </div>
 
-      <ProviderBanner provider="Claude" state={readiness.claude} isSuperAdmin={profile.role === "admin"} />
+      <ProviderBanner provider={readiness.brainLabel} state={readiness.brain} isSuperAdmin={profile.role === "admin"} />
 
       <Card>
         <CardHeader>
@@ -79,7 +79,7 @@ export default async function ContentCalendarPage({ params, searchParams }: Page
               action={generateCalendarAction.bind(null, client.id)}
               products={activeProducts.map((p) => ({ id: p.id, name: p.name }))}
               defaultStartDate={new Date().toISOString().slice(0, 10)}
-              claudeReady={readiness.claude === "ready"}
+              claudeReady={readiness.brain === "ready"}
             />
           )}
         </CardContent>

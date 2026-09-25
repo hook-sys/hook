@@ -11,6 +11,7 @@ const suites = [
   ["phase10_15.test.mjs", ""],
   ["providers.test.mjs", "store"],
   ["meta-assets.test.mjs", ""],
+  ["ai-brain.test.mjs", "claude,store,admin,server,session,nextcache"],
 ];
 let failed = 0;
 for (const [file, fakes] of suites) {

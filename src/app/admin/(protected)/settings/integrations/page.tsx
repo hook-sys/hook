@@ -57,7 +57,7 @@ export default async function IntegrationsPage({ searchParams }: PageProps<"/adm
   const params = await searchParams;
 
   const integrations = await listIntegrations();
-  const { google_drive: drive, meta, claude, fal } = integrations;
+  const { google_drive: drive, meta, claude, openai, gemini, fal } = integrations;
   const googleMissing = missingEnvVars(GOOGLE_ENV_VARS);
   const metaMissing = missingEnvVars(META_ENV_VARS);
 
@@ -208,6 +208,38 @@ export default async function IntegrationsPage({ searchParams }: PageProps<"/adm
             keyHint={claude.config.key_hint ?? null}
             lastTested={formatTimestamp(claude.config.last_tested_at)}
             lastError={claude.status === "error" ? (claude.config.last_error ?? null) : null}
+          />
+        </IntegrationCard>
+
+        <IntegrationCard
+          id="openai"
+          title="OpenAI"
+          description="OpenAI API as an AI brain for strategy, content, campaign intelligence, and reports."
+          badge={STATUS_BADGE[openai.status]}
+        >
+          <ApiKeyIntegrationPanel
+            provider="openai"
+            label="OpenAI"
+            keyHint={openai.config.key_hint ?? null}
+            lastTested={formatTimestamp(openai.config.last_tested_at)}
+            lastError={openai.status === "error" ? (openai.config.last_error ?? null) : null}
+            connectOnSave
+          />
+        </IntegrationCard>
+
+        <IntegrationCard
+          id="gemini"
+          title="Google Gemini"
+          description="Google Gemini API as an AI brain for strategy, content, campaign intelligence, and reports."
+          badge={STATUS_BADGE[gemini.status]}
+        >
+          <ApiKeyIntegrationPanel
+            provider="gemini"
+            label="Google Gemini"
+            keyHint={gemini.config.key_hint ?? null}
+            lastTested={formatTimestamp(gemini.config.last_tested_at)}
+            lastError={gemini.status === "error" ? (gemini.config.last_error ?? null) : null}
+            connectOnSave
           />
         </IntegrationCard>
 
