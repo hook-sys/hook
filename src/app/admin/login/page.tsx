@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { LoginForm } from "@/components/admin/LoginForm";
 
 export default async function AdminLoginPage({
@@ -15,7 +16,15 @@ export default async function AdminLoginPage({
           </span>
           <p className="mt-1 text-sm text-slate-500">Command Center Admin Login</p>
         </div>
+        {params.reset === "success" && (
+          <p role="status" className="mb-5 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            Password updated. Sign in with your new password.
+          </p>
+        )}
         <LoginForm next={next} />
+        <Link href="/auth/forgot-password" className="mt-5 block text-center text-sm text-brand-blue hover:underline">
+          Forgot password?
+        </Link>
       </div>
     </div>
   );

@@ -6,5 +6,6 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*"],
+  // /auth/* only refreshes the session (it is not a protected prefix).
+  matcher: ["/admin/:path*", "/auth/:path*"],
 };

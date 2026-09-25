@@ -11,10 +11,12 @@ import { ProcessSection } from "@/components/landing/ProcessSection";
 import { CtaSection } from "@/components/landing/CtaSection";
 import { ApplicationFormSection } from "@/components/landing/ApplicationFormSection";
 import { Footer } from "@/components/landing/Footer";
+import { AuthLinkForwarder } from "@/components/auth/AuthLinkForwarder";
 
 export default function Home() {
   return (
     <>
+      <AuthLinkForwarder />
       <Navbar />
       <main>
         <Hero />

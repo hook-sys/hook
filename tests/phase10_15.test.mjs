@@ -340,3 +340,26 @@ test("observability redaction + id validation", () => {
   assert.ok(isUuid(P1));
   for (const bad of ["", "1", "../etc", `${P1}' or '1'='1`, null, 5]) assert.ok(!isUuid(bad));
 });
+
+// ---------------- Auth: password recovery redirects ----------------
+test("auth: post-auth redirects stay inside the app; site URL never localhost on Vercel", async () => {
+  const { safeNextPath, getSiteUrl } = await import("@/lib/site-url");
+  assert.equal(safeNextPath("/auth/reset-password", "/x"), "/auth/reset-password");
+  assert.equal(safeNextPath("/admin/clients", "/x"), "/admin/clients");
+  for (const bad of ["https://evil.example", "//evil.example", "/\evil.example", "/somewhere", "", null, "javascript:alert(1)"]) {
+    assert.equal(safeNextPath(bad, "/auth/reset-password"), "/auth/reset-password", String(bad));
+  }
+  const saved = { ...process.env };
+  try {
+    delete process.env.SITE_URL; delete process.env.VERCEL_ENV; delete process.env.VERCEL_URL; delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+    assert.equal(getSiteUrl(), "http://localhost:3000");
+    process.env.VERCEL_ENV = "production"; process.env.VERCEL_PROJECT_PRODUCTION_URL = "hook-marketing.vercel.app";
+    assert.equal(getSiteUrl(), "https://hook-marketing.vercel.app");
+    process.env.SITE_URL = "https://hook-marketing.vercel.app/";
+    assert.equal(getSiteUrl(), "https://hook-marketing.vercel.app");
+    process.env.SITE_URL = "not a url";
+    assert.equal(getSiteUrl(), "https://hook-marketing.vercel.app");
+  } finally {
+    process.env = saved;
+  }
+});
